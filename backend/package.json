@@ -1,0 +1,30 @@
+{
+  "name": "phantom-protocol-backend",
+  "version": "1.0.0",
+  "description": "Phantom Protocol — Express.js Protocol Coordinator",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node mock-agents/run-test.js",
+    "mock:seller": "node mock-agents/seller.js",
+    "mock:buyer": "node mock-agents/buyer.js",
+    "axl": "node axl-cli/index.js"
+  },
+  "dependencies": {
+    "@0gfoundation/0g-ts-sdk": "^1.2.5",
+    "@0glabs/0g-serving-broker": "^0.7.5",
+    "@ensdomains/ensjs": "^3.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "ethers": "6.13.1",
+    "express": "^4.21.2",
+    "multer": "^2.1.1",
+    "openai": "^4.80.0",
+    "uuid": "^11.0.5",
+    "viem": "^2.21.54"
+  }
+}
