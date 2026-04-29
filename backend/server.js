@@ -1,0 +1,44 @@
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import { agentsRouter } from './routes/agents.js';
+import { offersRouter } from './routes/offers.js';
+import { dealsRouter } from './routes/deals.js';
+import { internalRouter } from './routes/internal.js';
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+app.use(cors());
+app.use(express.json());
+
+// ── Health ──────────────────────────────────────────────────────────
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime(), version: '1.0.0' });
+});
+
+// Coordinator AXL public key — agents use this to send messages to the coordinator
+app.get('/api/coordinator/axl-pubkey', (_req, res) => {
+  res.json({ axlPubkey: process.env.COORDINATOR_AXL_PUBKEY || null });
+});
+
+// ── Routes ──────────────────────────────────────────────────────────
+app.use('/api/agents', agentsRouter);
+app.use('/api/offers', offersRouter);
+app.use('/api/deals', dealsRouter);
+app.use('/internal', internalRouter);
+
+// ── 404 ─────────────────────────────────────────────────────────────
+app.use((_req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+// ── Global error handler ─────────────────────────────────────────────
+app.use((err, _req, res, _next) => {
+  console.error('[ERROR]', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+app.listen(PORT, () => {
+  console.log(`Phantom Protocol Coordinator running on port ${PORT}`);
+});
