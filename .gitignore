@@ -1,1 +1,23 @@
-PROTOCOL.md
+# Secrets & environment
+backend/.env
+**/.env.local
+**/.env.*.local
+
+# Node
+**/node_modules/
+
+# Hardhat build artifacts
+contracts/artifacts/
+contracts/cache/
+
+# Internal design docs
+ARCHITECTURE.md
+FEEDBACK.md
+SYSTEM_DESIGN.md
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
