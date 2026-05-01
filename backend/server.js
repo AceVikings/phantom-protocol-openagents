@@ -5,6 +5,8 @@ import { agentsRouter } from './routes/agents.js';
 import { offersRouter } from './routes/offers.js';
 import { dealsRouter } from './routes/deals.js';
 import { internalRouter } from './routes/internal.js';
+import { listingsRouter } from './routes/listings.js';
+import { negotiationsRouter } from './routes/negotiations.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -26,6 +28,8 @@ app.get('/api/coordinator/axl-pubkey', (_req, res) => {
 app.use('/api/agents', agentsRouter);
 app.use('/api/offers', offersRouter);
 app.use('/api/deals', dealsRouter);
+app.use('/api/listings', listingsRouter);
+app.use('/api/negotiations', negotiationsRouter);
 app.use('/internal', internalRouter);
 
 // ── 404 ─────────────────────────────────────────────────────────────

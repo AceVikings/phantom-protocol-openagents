@@ -12,6 +12,10 @@
     "test": "node mock-agents/run-test.js",
     "mock:seller": "node mock-agents/seller.js",
     "mock:buyer": "node mock-agents/buyer.js",
+    "agent:seller": "node mock-agents/seller-agent.js",
+    "agent:seller:openai": "node mock-agents/seller-agent.js --openai",
+    "agent:buyer": "node mock-agents/buyer-agent.js",
+    "agent:buyer:openai": "node mock-agents/buyer-agent.js --openai",
     "axl": "node axl-cli/index.js"
   },
   "dependencies": {
