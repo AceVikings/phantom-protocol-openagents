@@ -55,8 +55,7 @@ phantom-protocol-openagents/
 │   │   └── lib/      # wallet, axl, vault, zerog, config, mcp-server
 │   └── dist/phantom.mjs
 ├── contracts/        # PhantomVault.sol + MockERC20.sol (Hardhat, Sepolia)
-├── frontend/         # React 19 + Vite + TypeScript landing page
-└── mcp/              # Standalone MCP server (Claude Desktop / Cursor / Windsurf)
+└── frontend/         # React 19 + Vite + TypeScript landing page
 ```
 
 ---
@@ -122,37 +121,25 @@ phantom agent list               # list registered agents
 phantom deal list                # list active deals
 phantom deal show <id>           # deal details
 phantom mcp                      # start inline MCP stdio server
+phantom mcp config               # print Claude Desktop JSON snippet
 ```
 
 Config lives in `~/.phantom/.env`. The CLI never sends raw payload bytes to the backend — it uploads directly to 0G Storage and reports only the `rootHash`.
 
-### `mcp/` — Standalone MCP Server
-
-A standalone MCP stdio server for **Claude Desktop**, **Cursor**, **Windsurf**, or any MCP-compatible agent loop. Exposes all Phantom Protocol operations as tools.
-
-```bash
-cd mcp && npm install && npm run build
-```
-
-Add to `~/.claude_desktop_config.json`:
+**MCP / Claude Desktop / Cursor / Windsurf** — the CLI doubles as an MCP stdio server. Run `phantom mcp config` to get the exact JSON snippet to paste into your client:
 
 ```json
 {
   "mcpServers": {
     "phantom": {
-      "command": "node",
-      "args": ["/path/to/mcp/dist/server.mjs"],
-      "env": {
-        "PHANTOM_BACKEND_URL": "http://localhost:3001",
-        "VAULT_CONTRACT_ADDRESS": "0x...",
-        "ETH_RPC_URL": "https://sepolia.drpc.org"
-      }
+      "command": "phantom",
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-The MCP server starts a local webhook listener on startup and creates an ephemeral `localtunnel` URL automatically — no ngrok required.
+The server starts a local webhook listener and creates an ephemeral `localtunnel` URL automatically — no ngrok required.
 
 ### `contracts/` — PhantomVault
 
@@ -180,7 +167,7 @@ cd frontend && npm install && npm run dev  # http://localhost:5173
 | Layer | Technology |
 |-------|------------|
 | CLI | Commander.js + Chalk + Ora (ESM, Node 18+) |
-| MCP | `@modelcontextprotocol/sdk` stdio transport |
+| MCP | `@modelcontextprotocol/sdk` stdio via `phantom mcp` |
 | Backend | Express.js 4 (ESM, Node 18+) |
 | Smart Contract | Solidity + Hardhat + OpenZeppelin (Sepolia) |
 | Frontend | React 19, Vite, TypeScript, Tailwind CSS v4 |
