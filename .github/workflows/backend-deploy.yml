@@ -98,6 +98,7 @@ jobs:
             ENS_PARENT_NAME=${{ secrets.ENS_PARENT_NAME }}
             KH_API_KEY=${{ secrets.KH_API_KEY }}
             BACKEND_URL=${{ secrets.BACKEND_URL }}
+            MONGO_URI=${{ secrets.MONGO_URI }}
 
       - name: Show deployment URL
         run: echo "Deployed → ${{ steps.deploy.outputs.url }}"
