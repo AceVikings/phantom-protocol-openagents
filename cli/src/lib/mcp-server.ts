@@ -625,10 +625,11 @@ async function handleNegotiate(args: { listing_id: string; proposed_price_eth: n
 
 async function handleCreateDeal(args: { offer_id: string }, backendUrl: string) {
   const s = requireSession()
-  const { ok: dealOk, data } = await api('POST', '/api/deals', { offerId: args.offer_id }, s.apiKey, backendUrl) as { ok: boolean; data: { dealId?: string; error?: string } }
+  const { ok: dealOk, data } = await api('POST', '/api/deals', { offerId: args.offer_id }, s.apiKey, backendUrl) as { ok: boolean; data: { dealId?: string; selfDeal?: boolean; status?: string; error?: string } }
   if (!dealOk || !data.dealId) throw new Error(`Deal creation failed: ${data.error}`)
+  const selfNote = data.selfDeal ? '\nSELF_DEAL: auto-accepted (same wallet — skip phantom_accept_deal)' : ''
   return ok(
-    `DEAL_CREATED\nDEAL_ID:   ${data.dealId}\nOFFER_ID:  ${args.offer_id}\n\n` +
+    `DEAL_CREATED\nDEAL_ID:   ${data.dealId}\nOFFER_ID:  ${args.offer_id}\nSTATUS:    ${data.status ?? 'MATCHMAKING'}${selfNote}\n\n` +
     `${dealEnsBlock(data.dealId)}\n\n` +
     `Next: phantom_lock_funds deal_id=${data.dealId}`,
   )
