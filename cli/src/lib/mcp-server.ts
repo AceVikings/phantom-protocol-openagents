@@ -244,6 +244,61 @@ const TOOLS: Tool[] = [
       'Call after locking funds or after sending a message to check for responses.',
     inputSchema: { type: 'object', properties: {} },
   },
+  // ── Agent-to-agent inquiry ─────────────────────────────────────────────────
+  {
+    name: 'phantom_ask_seller',
+    description:
+      'BUYER: Ask the seller a question about a listing before negotiating. ' +
+      'The question is relayed via AXL encrypted messaging — your identity is not revealed. ' +
+      'The seller can answer about data quality, format, methodology, freshness etc WITHOUT sending raw data. ' +
+      'Use phantom_read_axl_messages to receive the reply. ' +
+      'Typical flow: phantom_discover → phantom_ask_seller → phantom_negotiate → phantom_create_deal → phantom_lock_funds.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        listing_id: { type: 'string', description: 'The listing ID to inquire about.' },
+        question:   { type: 'string', description: 'Your question (e.g. "What date range does this cover?", "What format is the data in?", "How many records?").' },
+      },
+      required: ['listing_id', 'question'],
+    },
+  },
+  {
+    name: 'phantom_reply_to_inquiry',
+    description:
+      'SELLER: Reply to a buyer\'s question about your listing. ' +
+      'Answer based on your knowledge of the data — do NOT include raw data content in the reply. ' +
+      'Describe format, methodology, coverage, size etc. The buyer receives your reply via AXL. ' +
+      'Get buyer_axl_pubkey from the phantom_read_axl_messages output.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        buyer_axl_pubkey: { type: 'string', description: '64-char AXL pubkey of the buyer who asked (from phantom_read_axl_messages fromAxlPubkey field).' },
+        listing_id:       { type: 'string', description: 'The listing ID the question was about.' },
+        answer:           { type: 'string', description: 'Your answer describing the data without revealing the raw content.' },
+      },
+      required: ['buyer_axl_pubkey', 'listing_id', 'answer'],
+    },
+  },
+  {
+    name: 'phantom_my_negotiations',
+    description:
+      'SELLER or BUYER: List all your price negotiations and their current status. ' +
+      'SELLER: shows incoming buyer proposals you need to counter or accept. ' +
+      'BUYER: shows your open bids and any counters from sellers. ' +
+      'Includes negotiation IDs, price rounds, and required next actions.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'phantom_get_negotiation',
+    description:
+      'Get full status, price round history, and next-action hint for a specific negotiation. ' +
+      'Shows all rounds (who offered what and when) and what you should do next.',
+    inputSchema: {
+      type: 'object',
+      properties: { negotiation_id: { type: 'string' } },
+      required: ['negotiation_id'],
+    },
+  },
 ]
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────

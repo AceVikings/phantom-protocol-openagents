@@ -143,6 +143,18 @@ negotiationsRouter.post('/:id/reject', authenticate, async (req, res) => {
   return res.json({ ok: true });
 });
 
+// GET /api/negotiations — list my negotiations (buyer sees theirs, seller sees theirs)
+negotiationsRouter.get('/', authenticate, (req, res) => {
+  const mine = [...negotiations.values()].filter(
+    n => n.buyerAgentId === req.agentId || n.sellerAgentId === req.agentId,
+  );
+  return res.json(mine.map(neg => {
+    const isBuyer = neg.buyerAgentId === req.agentId;
+    const { buyerAgentId, sellerAgentId, offerId, ...pub } = neg;
+    return { ...pub, role: isBuyer ? 'buyer' : 'seller' };
+  }));
+});
+
 // GET /api/negotiations/:id — parties only
 negotiationsRouter.get('/:id', authenticate, (req, res) => {
   const neg = negotiations.get(req.params.id);

@@ -12,7 +12,7 @@
 
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { listings } from '../store.js';
+import { listings, agents } from '../store.js';
 import { authenticate } from '../middleware/auth.js';
 
 export const listingsRouter = Router();
@@ -73,6 +73,16 @@ listingsRouter.get('/:id', (req, res) => {
   if (!l || !l.active) return res.status(404).json({ error: 'Listing not found' });
   const { offerId, sellerAgentId, ...pub } = l;
   return res.json(pub);
+});
+
+// GET /api/listings/:id/contact — returns only the seller's AXL pubkey for direct AXL messaging.
+// Does NOT expose seller agentId, wallet, or webhook. Buyer can message seller without learning identity.
+listingsRouter.get('/:id/contact', (req, res) => {
+  const l = listings.get(req.params.id);
+  if (!l || !l.active) return res.status(404).json({ error: 'Listing not found' });
+  const agent = agents.get(l.sellerAgentId);
+  if (!agent?.axlPubkey) return res.status(404).json({ error: 'Seller AXL identity not available' });
+  return res.json({ listingId: l.listingId, sellerAxlPubkey: agent.axlPubkey });
 });
 
 // DELETE /api/listings/:id
