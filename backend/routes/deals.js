@@ -134,10 +134,11 @@ dealsRouter.post('/:dealId/accept', authenticate, async (req, res) => {
   const deal = deals.get(req.params.dealId);
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
 
-  const isSelfDeal =
-    deal.buyerAgentId === deal.sellerAgentId ||
-    deal.buyerEphemeralAddress?.toLowerCase() === deal.sellerEphemeralAddress?.toLowerCase();
-  const isParty = deal.sellerAgentId === req.agentId || (isSelfDeal && deal.buyerAgentId === req.agentId);
+  const myAddr = req.agent?.ephemeralAddress?.toLowerCase();
+  const isBuyer  = deal.buyerAgentId  === req.agentId || (myAddr && deal.buyerEphemeralAddress?.toLowerCase()  === myAddr);
+  const isSeller = deal.sellerAgentId === req.agentId || (myAddr && deal.sellerEphemeralAddress?.toLowerCase() === myAddr);
+  const isSelfDeal = isBuyer && isSeller;
+  const isParty = isSeller || (isSelfDeal && isBuyer);
   if (!isParty) return res.status(403).json({ error: 'Not your deal' });
   if (deal.status !== DealStatus.MATCHMAKING) {
     return res.status(409).json({ error: `Deal is in ${deal.status}, expected MATCHMAKING` });
@@ -181,7 +182,9 @@ dealsRouter.post('/:dealId/accept', authenticate, async (req, res) => {
 dealsRouter.post('/:dealId/lock', authenticate, async (req, res) => {
   const deal = deals.get(req.params.dealId);
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
-  if (deal.buyerAgentId !== req.agentId) return res.status(403).json({ error: 'Not your deal' });
+  const myAddr = req.agent?.ephemeralAddress?.toLowerCase();
+  const isBuyer = deal.buyerAgentId === req.agentId || (myAddr && deal.buyerEphemeralAddress?.toLowerCase() === myAddr);
+  if (!isBuyer) return res.status(403).json({ error: 'Not your deal' });
   if (deal.status !== DealStatus.LOCKING) {
     return res.status(409).json({ error: `Deal is in ${deal.status}, expected LOCKING` });
   }
@@ -212,11 +215,11 @@ dealsRouter.post('/:dealId/confirm-upload', authenticate, async (req, res) => {
   const deal = deals.get(req.params.dealId);
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
 
-  const isSeller = deal.sellerAgentId === req.agentId;
-  const isSelfDeal =
-    deal.buyerAgentId === deal.sellerAgentId ||
-    deal.buyerEphemeralAddress?.toLowerCase() === deal.sellerEphemeralAddress?.toLowerCase();
-  const isBuyerSelfDeal = isSelfDeal && deal.buyerAgentId === req.agentId;
+  const myAddr = req.agent?.ephemeralAddress?.toLowerCase();
+  const isBuyer  = deal.buyerAgentId  === req.agentId || (myAddr && deal.buyerEphemeralAddress?.toLowerCase()  === myAddr);
+  const isSeller = deal.sellerAgentId === req.agentId || (myAddr && deal.sellerEphemeralAddress?.toLowerCase() === myAddr);
+  const isSelfDeal = isBuyer && isSeller;
+  const isBuyerSelfDeal = isSelfDeal && isBuyer;
 
   if (!isSeller && !isBuyerSelfDeal) {
     return res.status(403).json({ error: 'Not your deal' });
@@ -287,7 +290,9 @@ dealsRouter.post('/:dealId/dispute', authenticate, (req, res) => {
   const deal = deals.get(req.params.dealId);
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
 
-  const isParty = deal.buyerAgentId === req.agentId || deal.sellerAgentId === req.agentId;
+  const myAddr = req.agent?.ephemeralAddress?.toLowerCase();
+  const isParty = deal.buyerAgentId === req.agentId || deal.sellerAgentId === req.agentId ||
+    (myAddr && (deal.buyerEphemeralAddress?.toLowerCase() === myAddr || deal.sellerEphemeralAddress?.toLowerCase() === myAddr));
   if (!isParty) return res.status(403).json({ error: 'Access denied' });
 
   const { reason, evidence } = req.body;
@@ -303,7 +308,9 @@ dealsRouter.post('/:dealId/dispute', authenticate, (req, res) => {
 dealsRouter.post('/:dealId/refund', authenticate, (req, res) => {
   const deal = deals.get(req.params.dealId);
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
-  if (deal.buyerAgentId !== req.agentId) {
+  const myAddr = req.agent?.ephemeralAddress?.toLowerCase();
+  const isBuyer = deal.buyerAgentId === req.agentId || (myAddr && deal.buyerEphemeralAddress?.toLowerCase() === myAddr);
+  if (!isBuyer) {
     return res.status(403).json({ error: 'Only the buyer can request a refund' });
   }
 
