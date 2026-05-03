@@ -7,7 +7,7 @@
  *
  * Environment:
  *   OLLAMA_HOST   — default http://localhost:11434
- *   OLLAMA_MODEL  — default llama3.2
+ *   OLLAMA_MODEL  — default gemma4:latest
  *   OPENAI_API_KEY — required for openai provider
  *   OPENAI_MODEL  — default gpt-4o-mini
  */
@@ -15,7 +15,7 @@
 import OpenAI from 'openai';
 
 export const OLLAMA_HOST  = process.env.OLLAMA_HOST  || 'http://localhost:11434';
-export const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
+export const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma4:latest';
 export const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
 /**

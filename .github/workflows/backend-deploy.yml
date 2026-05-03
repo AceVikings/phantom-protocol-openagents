@@ -1,0 +1,140 @@
+name: Backend — Build & Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-deploy.yml"
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ethonline-476311
+  REGION: us-central1
+  SERVICE_NAME: phantom-backend
+  REGISTRY: gcr.io
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    outputs:
+      image: ${{ steps.build-image.outputs.image }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build & tag Docker image
+        id: build-image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}"
+          docker build -t "$IMAGE:${{ github.sha }}" ./backend
+          docker tag "$IMAGE:${{ github.sha }}" "$IMAGE:latest"
+          echo "image=$IMAGE:${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Push Docker image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}"
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Cloud Run
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ env.REGION }}
+          image: ${{ needs.build.outputs.image }}
+          flags: |
+            --allow-unauthenticated
+            --memory=1Gi
+            --cpu=1
+            --min-instances=0
+            --max-instances=10
+            --timeout=300
+            --concurrency=100
+          env_vars: |
+            NODE_ENV=production
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            PROTOCOL_PRIVATE_KEY=${{ secrets.PROTOCOL_PRIVATE_KEY }}
+            INTERNAL_SECRET=${{ secrets.INTERNAL_SECRET }}
+            COORDINATOR_AXL_PUBKEY=${{ secrets.COORDINATOR_AXL_PUBKEY }}
+            ZERO_G_RPC_URL=${{ secrets.ZERO_G_RPC_URL }}
+            ZERO_G_STORAGE_URL=${{ secrets.ZERO_G_STORAGE_URL }}
+            ZERO_G_PROVIDER_ADDRESS=${{ secrets.ZERO_G_PROVIDER_ADDRESS }}
+            ETH_RPC_URL=${{ secrets.ETH_RPC_URL }}
+            ENS_PARENT_NAME=${{ secrets.ENS_PARENT_NAME }}
+            KH_API_KEY=${{ secrets.KH_API_KEY }}
+            BACKEND_URL=${{ secrets.BACKEND_URL }}
+
+      - name: Show deployment URL
+        run: echo "Deployed → ${{ steps.deploy.outputs.url }}"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  cleanup:
+    name: Cleanup old images
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Delete old images (keep last 5)
+        run: |
+          gcloud container images list-tags \
+            "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}" \
+            --filter="NOT tags:latest" \
+            --sort-by="~timestamp" \
+            --format="get(digest)" \
+            --limit=100 | tail -n +6 | while read digest; do
+              gcloud container images delete \
+                "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}@$digest" \
+                --quiet --force-delete-tags || true
+            done
+        continue-on-error: true

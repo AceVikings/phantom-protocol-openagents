@@ -7,6 +7,7 @@ import { dealsRouter } from './routes/deals.js';
 import { internalRouter } from './routes/internal.js';
 import { listingsRouter } from './routes/listings.js';
 import { negotiationsRouter } from './routes/negotiations.js';
+import { messagesRouter } from './routes/messages.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -30,6 +31,7 @@ app.use('/api/offers', offersRouter);
 app.use('/api/deals', dealsRouter);
 app.use('/api/listings', listingsRouter);
 app.use('/api/negotiations', negotiationsRouter);
+app.use('/api/messages', messagesRouter);
 app.use('/internal', internalRouter);
 
 // ── 404 ─────────────────────────────────────────────────────────────

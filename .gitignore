@@ -21,3 +21,4 @@ SYSTEM_DESIGN.md
 # Logs
 *.log
 npm-debug.log*
+/cli/dist

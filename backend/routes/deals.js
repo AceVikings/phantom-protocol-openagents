@@ -1,19 +1,13 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import multer from 'multer';
 import { deals, offers } from '../store.js';
 import { authenticate } from '../middleware/auth.js';
 import { DealStatus, transition } from '../dealMachine.js';
 import { mintDealSubnames } from '../services/ens.js';
 import { sendAxlMessage } from '../services/axl.js';
-import { uploadToZeroG, verifyRootHashExists } from '../services/zerog.js';
+import { verifyRootHashExists } from '../services/zerog.js';
 import { createArbiterWorkflow, createJanitorWorkflow } from '../services/keeperhub.js';
 import { notifyAgent } from '../services/notify.js';
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB max
-});
 
 export const dealsRouter = Router();
 
@@ -162,25 +156,20 @@ dealsRouter.post('/:dealId/lock', authenticate, async (req, res) => {
   res.json({ dealId: deal.dealId, status: deal.status });
 });
 
-// POST /api/deals/:dealId/upload — seller sends already-encrypted payload
-dealsRouter.post('/:dealId/upload', authenticate, upload.single('file'), async (req, res) => {
+// POST /api/deals/:dealId/confirm-upload — CLI has uploaded to 0G directly; sends rootHash
+dealsRouter.post('/:dealId/confirm-upload', authenticate, async (req, res) => {
   const deal = deals.get(req.params.dealId);
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
   if (deal.sellerAgentId !== req.agentId) return res.status(403).json({ error: 'Not your deal' });
   if (deal.status !== DealStatus.UPLOADING) {
     return res.status(409).json({ error: `Deal is in ${deal.status}, expected UPLOADING` });
   }
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-  let rootHash, txHash;
-  try {
-    ({ rootHash, txHash } = await uploadToZeroG(deal.dealId, req.file.buffer));
-  } catch (err) {
-    console.error('[0G] Upload failed:', err.message);
-    return res.status(500).json({ error: 'Upload to 0G failed', details: err.message });
-  }
+  const { rootHash, txHash } = req.body;
+  if (!rootHash) return res.status(400).json({ error: 'rootHash is required' });
 
   deal.rootHash = rootHash;
+  deal.txHash   = txHash ?? null;
   transition(deal, DealStatus.VERIFYING);
 
   // Notify buyer that upload is complete
@@ -230,7 +219,7 @@ dealsRouter.post('/:dealId/upload', authenticate, upload.single('file'), async (
     }
   });
 
-  res.json({ rootHash, txHash, status: deal.status });
+  res.json({ rootHash, txHash: deal.txHash, status: deal.status });
 });
 
 // POST /api/deals/:dealId/dispute

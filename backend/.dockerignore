@@ -1,0 +1,15 @@
+# Development artifacts
+node_modules
+.env
+.env.*
+*.log
+npm-debug.log*
+
+# Local dev / test agents (not needed in server container)
+axl-cli/
+mock-agents/
+test-upload.mjs
+
+# Docker doesn't need these
+.gitignore
+README.md
