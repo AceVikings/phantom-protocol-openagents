@@ -233,12 +233,13 @@ const TOOLS: Tool[] = [
       'One-shot setup: creates a wallet if needed, registers with the coordinator, and saves session. ' +
       'Idempotent — safe to call again if already registered. ' +
       'Call this first before any other phantom tool. ' +
-      'Use the identity param to register separate buyer/seller personas (e.g. identity="buyer1", identity="seller1"). ' +
-      'If you receive "Invalid API key" errors, the backend was restarted and lost its state — call phantom_init with force=true and the original role to re-register.',
+      'Called with NO arguments → auto-registers BOTH a buyer and a seller identity sharing the same wallet. ' +
+      'Called with role= → registers a single identity for that role. ' +
+      'If you receive "Invalid API key" errors, the backend was restarted — call phantom_init with force=true to re-register.',
     inputSchema: {
       type: 'object',
       properties: {
-        role:         { type: 'string', enum: ['buyer', 'seller'], description: 'Agent role — required on first call.' },
+        role:         { type: 'string', enum: ['buyer', 'seller'], description: 'Agent role. Omit to auto-register both buyer and seller identities sharing one wallet.' },
         identity:     { type: 'string', description: 'Named persona (default: "default"). Use different names to run buyer and seller in the same session, e.g. identity="alice-seller".' },
         display_name: { type: 'string', description: 'Human-readable label stored with the identity (e.g. "Alice the Data Seller"). Shown in all outputs.' },
         force:        { type: 'boolean', description: 'Force re-registration even if a session already exists. Use when the backend was restarted and the saved API key is no longer valid (error: "Invalid API key").' },
@@ -818,6 +819,45 @@ async function handleInit(
   webhookHost: string,
   webhookPort: number,
 ) {
+  // ── Dual-identity auto-init ──────────────────────────────────────────────────
+  // Called with no role and no explicit identity → register both buyer + seller
+  // sharing the single default wallet (~/.phantom/wallet.json).
+  if (!args.role && !args.identity) {
+    const results: string[] = []
+    for (const role of ['buyer', 'seller'] as const) {
+      setCurrentIdentity(role)
+      if (args.force) clearSession()
+      const existing = getSession()
+      if (existing) {
+        results.push(`${role.toUpperCase()}: already registered (agent ${existing.agentId})`)
+      } else {
+        try {
+          await handleRegister({ role }, backendUrl, webhookHost, webhookPort)
+          results.push(`${role.toUpperCase()}: registered ✓`)
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e)
+          results.push(`${role.toUpperCase()}: failed — ${msg}`)
+        }
+      }
+    }
+    setCurrentIdentity('buyer') // default active persona
+    const w        = loadOrCreateWallet()
+    const balances = await fetchBalances(w.address)
+    return ok(
+      `DUAL_INIT_COMPLETE\n\n` +
+      results.join('\n') + '\n\n' +
+      `━━ SHARED WALLET (Sepolia) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `  ADDRESS: ${w.address}\n` +
+      `${balances}\n\n` +
+      `  ⚡ FUND THIS ADDRESS to participate in the marketplace:\n` +
+      `     Sepolia ETH → https://sepoliafaucet.com\n` +
+      `     0G OG       → https://hub.0g.ai/faucet\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `ACTIVE: buyer\nUse phantom_switch_identity identity="seller" to act as seller.`,
+    )
+  }
+
+  // ── Single-identity init (original behaviour) ────────────────────────────────
   setCurrentIdentity(args.identity ?? 'default')
   const identity = getCurrentIdentity()
   if (args.force) clearSession()

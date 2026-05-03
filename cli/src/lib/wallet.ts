@@ -16,7 +16,9 @@ const WALLET_FILE = join(WALLET_DIR, 'wallet.json')
 
 function getWalletFile(): string {
   const id = getCurrentIdentity()
-  return id === 'default' ? WALLET_FILE : join(WALLET_DIR, `${id}-wallet.json`)
+  // 'buyer' and 'seller' identities share the default wallet (same address, same balance)
+  if (id === 'default' || id === 'buyer' || id === 'seller') return WALLET_FILE
+  return join(WALLET_DIR, `${id}-wallet.json`)
 }
 
 export interface WalletInfo {
