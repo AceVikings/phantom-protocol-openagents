@@ -219,12 +219,13 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'phantom_my_deals',
-    description: 'Show all your active deals and their status.',
+    description: 'Show all your active deals and their status. ALWAYS display the full output to the user — it includes on-chain explorer links (ETH Sepolia vault lock tx and 0G Storage upload tx) they need to verify the transaction.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'phantom_deal_status',
-    description: 'Get the status and details of a specific deal.',
+    description: 'Get the status and details of a specific deal. ALWAYS show the full response to the user — it contains on-chain transaction links: ETH (Sepolia) vault lock explorer URL and 0G Storage upload tx + rootHash. Display these links verbatim so the user can click through to verify.',
+
     inputSchema: {
       type: 'object',
       properties: { deal_id: { type: 'string' } },
@@ -591,9 +592,14 @@ async function handleUploadPayload(args: { deal_id: string }, backendUrl: string
   if (!confOk) throw new Error(`Confirm-upload failed: ${confData.error ?? JSON.stringify(confData)}`)
   deleteDealPayload(args.deal_id)
   return ok(
-    `PAYLOAD_UPLOADED\nDEAL_ID: ${args.deal_id}\nROOT_HASH: ${rootHash}\n` +
-    `TX_HASH: ${txHash}\nSTATUS: ${confData.status ?? 'VERIFYING'}\n` +
-    `\nData uploaded directly to 0G Storage — backend received rootHash only.`,
+    `PAYLOAD_UPLOADED\nDEAL_ID: ${args.deal_id}\nSTATUS: ${confData.status ?? 'VERIFYING'}\n\n` +
+    `━━ ON-CHAIN PROOF ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `  ROOT_HASH : ${rootHash}\n` +
+    `  0G TX     : https://chainscan-galileo.0g.ai/tx/${txHash}\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `⚠ SHOW_USER: Present both links above to the user — the 0G explorer URL proves the payload\n` +
+    `  was stored on the decentralised network. The rootHash is the permanent content identifier.\n\n` +
+    `Data uploaded directly to 0G Storage — backend received rootHash only.`,
   )
 }
 
@@ -680,7 +686,12 @@ async function handleLockFunds(args: { deal_id: string }, backendUrl: string) {
     { lockTxHash: txHash }, s.apiKey, backendUrl) as { ok: boolean; data: { status?: string; error?: string } }
   if (!lockOk) throw new Error(`Lock notification failed: ${lockData.error}`)
 
-  return ok(`FUNDS_LOCKED\nDEAL_ID: ${args.deal_id}\nTX_HASH: ${txHash}\nAMOUNT: ${deal.priceUSDC} ETH\nEXPLORER: https://sepolia.etherscan.io/tx/${txHash}`)
+  return ok(
+    `FUNDS_LOCKED\nDEAL_ID: ${args.deal_id}\nTX_HASH: ${txHash}\nAMOUNT: ${deal.priceUSDC} ETH\n` +
+    `EXPLORER: https://sepolia.etherscan.io/tx/${txHash}\n\n` +
+    `⚠ SHOW_USER: Display the EXPLORER link above so the user can verify the escrow transaction on Sepolia.\n` +
+    `Next: phantom_upload_payload deal_id=${args.deal_id}`,
+  )
 }
 
 async function handleMyDeals(backendUrl: string) {
