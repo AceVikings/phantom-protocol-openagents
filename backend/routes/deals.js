@@ -50,6 +50,34 @@ dealsRouter.post('/', authenticate, async (req, res) => {
     expiresAt: Date.now() + TTL_MS,
   });
 
+  const isSelfDeal =
+    req.agentId === offer.sellerAgentId ||
+    req.agent.ephemeralAddress?.toLowerCase() === offer.sellerEphemeralAddress?.toLowerCase();
+
+  if (isSelfDeal) {
+    // Same wallet / same agent — auto-advance past MATCHMAKING so buyer can lock immediately
+    const deal = deals.get(dealId);
+    transition(deal, DealStatus.MINTING);
+
+    mintDealSubnames(
+      dealId,
+      deal.buyerEphemeralAddress,
+      deal.sellerEphemeralAddress,
+    ).catch((err) => console.error('[ENS] Minting failed (self-deal):', err.message));
+
+    try {
+      const { arbiterWorkflowId } = await createArbiterWorkflow(dealId);
+      const { janitorWorkflowId } = await createJanitorWorkflow(dealId, deal.expiresAt);
+      deal.arbiterWorkflowId = arbiterWorkflowId;
+      deal.janitorWorkflowId = janitorWorkflowId;
+    } catch (err) {
+      console.error('[KeeperHub] Workflow creation failed (self-deal):', err.message);
+    }
+
+    transition(deal, DealStatus.LOCKING);
+    return res.status(201).json({ dealId, selfDeal: true, status: deal.status });
+  }
+
   // Notify seller over AXL
   sendAxlMessage(offer.sellerAxlPubkey, {
     type: 'DEAL_OFFER',
@@ -160,7 +188,16 @@ dealsRouter.post('/:dealId/lock', authenticate, async (req, res) => {
 dealsRouter.post('/:dealId/confirm-upload', authenticate, async (req, res) => {
   const deal = deals.get(req.params.dealId);
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
-  if (deal.sellerAgentId !== req.agentId) return res.status(403).json({ error: 'Not your deal' });
+
+  const isSeller = deal.sellerAgentId === req.agentId;
+  const isSelfDeal =
+    deal.buyerAgentId === deal.sellerAgentId ||
+    deal.buyerEphemeralAddress?.toLowerCase() === deal.sellerEphemeralAddress?.toLowerCase();
+  const isBuyerSelfDeal = isSelfDeal && deal.buyerAgentId === req.agentId;
+
+  if (!isSeller && !isBuyerSelfDeal) {
+    return res.status(403).json({ error: 'Not your deal' });
+  }
   if (deal.status !== DealStatus.UPLOADING) {
     return res.status(409).json({ error: `Deal is in ${deal.status}, expected UPLOADING` });
   }
