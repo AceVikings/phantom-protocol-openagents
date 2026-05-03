@@ -234,6 +234,9 @@ const TOOLS: Tool[] = [
       'Idempotent — safe to call again if already registered. ' +
       'Call this first before any other phantom tool. ' +
       'Called with NO arguments → auto-registers BOTH a buyer and a seller identity sharing the same wallet. ' +
+      'After dual-init, buyer-side tools (discover, negotiate, lock_funds, create_deal) automatically use the buyer identity ' +
+      'and seller-side tools (my_listings, accept_deal, upload_payload) automatically use the seller identity — ' +
+      'no manual phantom_switch_identity needed. ' +
       'Called with role= → registers a single identity for that role. ' +
       'If you receive "Invalid API key" errors, the backend was restarted — call phantom_init with force=true to re-register.',
     inputSchema: {
@@ -1118,6 +1121,37 @@ export async function startMcpServer(autoRole?: 'buyer' | 'seller'): Promise<voi
 
   mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params
+
+    // ── Auto-identity selection ────────────────────────────────────────────────
+    // Tools that are unambiguously buyer-side or seller-side automatically
+    // activate the matching identity so the agent never needs to call
+    // phantom_switch_identity manually. Both identities remain independent;
+    // the switch is non-persistent (reverts after the call).
+    const BUYER_TOOLS = new Set([
+      'phantom_discover',       // browse listings to buy
+      'phantom_negotiate',      // open negotiation as buyer
+      'phantom_create_deal',    // create deal from accepted offer
+      'phantom_lock_funds',     // lock escrow (buyer action)
+      'phantom_ask_seller',     // send pre-purchase inquiry
+    ])
+    const SELLER_TOOLS = new Set([
+      'phantom_my_listings',    // seller's own listings
+      'phantom_list_report',    // seller analytics
+      'phantom_accept_deal',    // seller accepts deal
+      'phantom_upload_payload', // seller delivers data
+      'phantom_reply_to_inquiry', // seller answers buyer question
+    ])
+
+    const prevIdentity = getCurrentIdentity()
+    if (BUYER_TOOLS.has(name) && prevIdentity !== 'buyer') {
+      // Only auto-switch if the buyer identity has a session
+      const buyerSession = (() => { setCurrentIdentity('buyer'); return getSession() })()
+      if (!buyerSession) setCurrentIdentity(prevIdentity) // no buyer session — leave as-is
+    } else if (SELLER_TOOLS.has(name) && prevIdentity !== 'seller') {
+      const sellerSession = (() => { setCurrentIdentity('seller'); return getSession() })()
+      if (!sellerSession) setCurrentIdentity(prevIdentity)
+    }
+
     try {
       switch (name) {
         case 'phantom_register':       return await handleRegister(args as { role: 'buyer' | 'seller' }, BACKEND_URL, WEBHOOK_HOST, WEBHOOK_PORT)
@@ -1151,6 +1185,9 @@ export async function startMcpServer(autoRole?: 'buyer' | 'seller'): Promise<voi
       }
     } catch (e: unknown) {
       return err((e as Error).message)
+    } finally {
+      // Restore identity so auto-selection doesn't bleed into subsequent calls
+      setCurrentIdentity(prevIdentity)
     }
   })
 
