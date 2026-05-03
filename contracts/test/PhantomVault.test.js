@@ -8,42 +8,27 @@ function dealKey(id) {
   return ethers.keccak256(ethers.toUtf8Bytes(id));
 }
 
-const USDC_DECIMALS = 6n;
-const ONE_USDC      = 10n ** USDC_DECIMALS;        // 1_000_000
-const FIVE_USDC     = 5n * ONE_USDC;               // 5_000_000
-const ONE_HOUR      = 3600;
-const FIVE_MIN      = 300;
+const FIVE_ETH  = ethers.parseEther("5");
+const ZERO_ETH  = 0n;
+const ONE_HOUR  = 3600;
+const FIVE_MIN  = 300;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("PhantomVault", function () {
-  let vault, usdc;
+  let vault;
   let owner, operator, buyer, seller, stranger;
 
   beforeEach(async function () {
     [owner, operator, buyer, seller, stranger] = await ethers.getSigners();
 
-    // Deploy a minimal ERC-20 mock to stand in for USDC
-    const MockERC20 = await ethers.getContractFactory("MockERC20");
-    usdc = await MockERC20.deploy("USD Coin", "USDC", 6);
-
-    // Mint 1000 USDC to buyer
-    await usdc.mint(buyer.address, 1000n * ONE_USDC);
-
-    // Deploy vault
+    // Deploy vault (ETH-only, no token param)
     const PhantomVault = await ethers.getContractFactory("PhantomVault");
-    vault = await PhantomVault.deploy(await usdc.getAddress(), operator.address);
-
-    // Buyer approves vault
-    await usdc.connect(buyer).approve(await vault.getAddress(), ethers.MaxUint256);
+    vault = await PhantomVault.deploy(operator.address);
   });
 
   // ── deployment ──────────────────────────────────────────────────────────────
   describe("Deployment", function () {
-    it("sets USDC address", async function () {
-      expect(await vault.usdc()).to.equal(await usdc.getAddress());
-    });
-
     it("sets operator address", async function () {
       expect(await vault.operator()).to.equal(operator.address);
     });
@@ -52,17 +37,10 @@ describe("PhantomVault", function () {
       expect(await vault.owner()).to.equal(owner.address);
     });
 
-    it("reverts with ZeroAddress for zero USDC", async function () {
-      const PhantomVault = await ethers.getContractFactory("PhantomVault");
-      await expect(
-        PhantomVault.deploy(ethers.ZeroAddress, operator.address)
-      ).to.be.revertedWithCustomError(vault, "ZeroAddress");
-    });
-
     it("reverts with ZeroAddress for zero operator", async function () {
       const PhantomVault = await ethers.getContractFactory("PhantomVault");
       await expect(
-        PhantomVault.deploy(await usdc.getAddress(), ethers.ZeroAddress)
+        PhantomVault.deploy(ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(vault, "ZeroAddress");
     });
   });
@@ -71,56 +49,56 @@ describe("PhantomVault", function () {
   describe("deposit()", function () {
     const DEAL = "550e8400-e29b-41d4-a716-446655440000";
 
-    it("locks USDC and emits Locked", async function () {
+    it("locks ETH and emits Locked", async function () {
       const key = dealKey(DEAL);
+      const vaultAddr = await vault.getAddress();
       await expect(
-        vault.connect(buyer).deposit(key, seller.address, FIVE_USDC, ONE_HOUR)
+        vault.connect(buyer).deposit(key, seller.address, ONE_HOUR, { value: FIVE_ETH })
       )
         .to.emit(vault, "Locked")
-        .withArgs(key, buyer.address, seller.address, FIVE_USDC, anyValue);
+        .withArgs(key, buyer.address, seller.address, FIVE_ETH, anyValue);
 
-      // Funds transferred into vault
-      expect(await usdc.balanceOf(await vault.getAddress())).to.equal(FIVE_USDC);
-      expect(await usdc.balanceOf(buyer.address)).to.equal(1000n * ONE_USDC - FIVE_USDC);
+      // ETH held by vault
+      expect(await ethers.provider.getBalance(vaultAddr)).to.equal(FIVE_ETH);
     });
 
     it("stores correct deal struct", async function () {
       const key = dealKey(DEAL);
-      await vault.connect(buyer).deposit(key, seller.address, FIVE_USDC, ONE_HOUR);
+      await vault.connect(buyer).deposit(key, seller.address, ONE_HOUR, { value: FIVE_ETH });
 
       const deal = await vault.getDeal(key);
       expect(deal.buyer).to.equal(buyer.address);
       expect(deal.seller).to.equal(seller.address);
-      expect(deal.amount).to.equal(FIVE_USDC);
+      expect(deal.amount).to.equal(FIVE_ETH);
       expect(deal.status).to.equal(1); // Locked
     });
 
     it("reverts if deal already exists", async function () {
       const key = dealKey(DEAL);
-      await vault.connect(buyer).deposit(key, seller.address, FIVE_USDC, ONE_HOUR);
+      await vault.connect(buyer).deposit(key, seller.address, ONE_HOUR, { value: FIVE_ETH });
       await expect(
-        vault.connect(buyer).deposit(key, seller.address, FIVE_USDC, ONE_HOUR)
+        vault.connect(buyer).deposit(key, seller.address, ONE_HOUR, { value: FIVE_ETH })
       ).to.be.revertedWithCustomError(vault, "DealAlreadyExists");
     });
 
-    it("reverts with ZeroAmount", async function () {
+    it("reverts with ZeroAmount when msg.value is 0", async function () {
       const key = dealKey(DEAL);
       await expect(
-        vault.connect(buyer).deposit(key, seller.address, 0, ONE_HOUR)
+        vault.connect(buyer).deposit(key, seller.address, ONE_HOUR, { value: 0n })
       ).to.be.revertedWithCustomError(vault, "ZeroAmount");
     });
 
     it("reverts with ZeroAddress for zero seller", async function () {
       const key = dealKey(DEAL);
       await expect(
-        vault.connect(buyer).deposit(key, ethers.ZeroAddress, FIVE_USDC, ONE_HOUR)
+        vault.connect(buyer).deposit(key, ethers.ZeroAddress, ONE_HOUR, { value: FIVE_ETH })
       ).to.be.revertedWithCustomError(vault, "ZeroAddress");
     });
 
     it("reverts with LockDurationOutOfRange if too short", async function () {
       const key = dealKey(DEAL);
       await expect(
-        vault.connect(buyer).deposit(key, seller.address, FIVE_USDC, 60) // 60s < MIN (5min)
+        vault.connect(buyer).deposit(key, seller.address, 60, { value: FIVE_ETH }) // 60s < MIN (5min)
       ).to.be.revertedWithCustomError(vault, "LockDurationOutOfRange");
     });
 
@@ -128,7 +106,7 @@ describe("PhantomVault", function () {
       const key = dealKey(DEAL);
       const eightDays = 8 * 24 * 60 * 60;
       await expect(
-        vault.connect(buyer).deposit(key, seller.address, FIVE_USDC, eightDays)
+        vault.connect(buyer).deposit(key, seller.address, eightDays, { value: FIVE_ETH })
       ).to.be.revertedWithCustomError(vault, "LockDurationOutOfRange");
     });
   });
@@ -138,22 +116,26 @@ describe("PhantomVault", function () {
     const DEAL = "deal-release-test";
 
     beforeEach(async function () {
-      await vault.connect(buyer).deposit(dealKey(DEAL), seller.address, FIVE_USDC, ONE_HOUR);
+      await vault.connect(buyer).deposit(dealKey(DEAL), seller.address, ONE_HOUR, { value: FIVE_ETH });
     });
 
-    it("operator can release funds to seller", async function () {
+    it("operator can release ETH to seller", async function () {
       const key = dealKey(DEAL);
+      const before = await ethers.provider.getBalance(seller.address);
       await expect(vault.connect(operator).release(key))
         .to.emit(vault, "Released")
-        .withArgs(key, seller.address, FIVE_USDC);
+        .withArgs(key, seller.address, FIVE_ETH);
 
-      expect(await usdc.balanceOf(seller.address)).to.equal(FIVE_USDC);
-      expect(await usdc.balanceOf(await vault.getAddress())).to.equal(0n);
+      const after = await ethers.provider.getBalance(seller.address);
+      expect(after - before).to.equal(FIVE_ETH);
+      expect(await ethers.provider.getBalance(await vault.getAddress())).to.equal(0n);
     });
 
     it("owner can also release", async function () {
+      const before = await ethers.provider.getBalance(seller.address);
       await vault.connect(owner).release(dealKey(DEAL));
-      expect(await usdc.balanceOf(seller.address)).to.equal(FIVE_USDC);
+      const after = await ethers.provider.getBalance(seller.address);
+      expect(after - before).to.equal(FIVE_ETH);
     });
 
     it("stranger cannot release", async function () {
@@ -196,16 +178,17 @@ describe("PhantomVault", function () {
     const DEAL = "deal-refund-test";
 
     beforeEach(async function () {
-      await vault.connect(buyer).deposit(dealKey(DEAL), seller.address, FIVE_USDC, ONE_HOUR);
+      await vault.connect(buyer).deposit(dealKey(DEAL), seller.address, ONE_HOUR, { value: FIVE_ETH });
     });
 
-    it("operator can refund buyer", async function () {
+    it("operator can refund ETH to buyer", async function () {
       const key = dealKey(DEAL);
-      const before = await usdc.balanceOf(buyer.address);
+      const before = await ethers.provider.getBalance(buyer.address);
       await expect(vault.connect(operator).refund(key))
         .to.emit(vault, "Refunded")
-        .withArgs(key, buyer.address, FIVE_USDC);
-      expect(await usdc.balanceOf(buyer.address)).to.equal(before + FIVE_USDC);
+        .withArgs(key, buyer.address, FIVE_ETH);
+      const after = await ethers.provider.getBalance(buyer.address);
+      expect(after - before).to.equal(FIVE_ETH);
     });
 
     it("stranger cannot refund", async function () {
@@ -241,15 +224,18 @@ describe("PhantomVault", function () {
     const DEAL = "deal-expired-test";
 
     beforeEach(async function () {
-      await vault.connect(buyer).deposit(dealKey(DEAL), seller.address, FIVE_USDC, FIVE_MIN);
+      await vault.connect(buyer).deposit(dealKey(DEAL), seller.address, FIVE_MIN, { value: FIVE_ETH });
     });
 
-    it("buyer can reclaim after expiry", async function () {
+    it("buyer can reclaim ETH after expiry", async function () {
       const key = dealKey(DEAL);
       await time.increase(FIVE_MIN + 1);
-      const before = await usdc.balanceOf(buyer.address);
-      await vault.connect(buyer).claimExpiredRefund(key);
-      expect(await usdc.balanceOf(buyer.address)).to.equal(before + FIVE_USDC);
+      const before = await ethers.provider.getBalance(buyer.address);
+      const tx = await vault.connect(buyer).claimExpiredRefund(key);
+      const receipt = await tx.wait();
+      const gasCost = receipt.gasUsed * receipt.gasPrice;
+      const after = await ethers.provider.getBalance(buyer.address);
+      expect(after - before + gasCost).to.equal(FIVE_ETH);
     });
 
     it("reverts before expiry", async function () {

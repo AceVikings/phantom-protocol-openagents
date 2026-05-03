@@ -1,42 +1,37 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title  PhantomVault
  * @notice Escrow contract for the Phantom Protocol deal lifecycle.
+ *         Settles in native ETH — no token approvals required.
  *
  * Flow:
- *   1. Buyer calls deposit(dealId, seller, amount, lockDuration)
- *      - USDC is pulled from buyer into this contract
- *      - Emits Locked(dealId, buyer, seller, amount, expiresAt)
+ *   1. Buyer calls deposit(dealKey, seller, lockDuration) with msg.value
+ *      - ETH is held in this contract
+ *      - Emits Locked(dealKey, buyer, seller, amount, expiresAt)
  *      - The resulting tx hash is stored in the backend as deal.lockTxHash
  *
- *   2. After 0G verification passes, the protocol operator calls release(dealId)
- *      - USDC is forwarded to the seller's ephemeral address
- *      - Emits Released(dealId, seller, amount)
+ *   2. After 0G verification passes, the protocol operator calls release(dealKey)
+ *      - ETH is forwarded to the seller's ephemeral address
+ *      - Emits Released(dealKey, seller, amount)
  *
- *   3. On deal failure/dispute the operator calls refund(dealId)
- *      - USDC is returned to the buyer
- *      - Emits Refunded(dealId, buyer, amount)
+ *   3. On deal failure/dispute the operator calls refund(dealKey)
+ *      - ETH is returned to the buyer
+ *      - Emits Refunded(dealKey, buyer, amount)
  *
  *   4. If the operator is unresponsive after expiry, the buyer can call
- *      claimExpiredRefund(dealId) to self-recover funds.
+ *      claimExpiredRefund(dealKey) to self-recover funds.
  *
  * DealId mapping:
  *   Backend deal IDs are UUID strings. Convert to bytes32 with:
  *     ethers.keccak256(ethers.toUtf8Bytes(dealId))
  *   The same conversion is used in scripts/deploy.js helpers.
- *
- * USDC on Sepolia: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238 (Circle testnet)
  */
 contract PhantomVault is Ownable, ReentrancyGuard {
-    using SafeERC20 for IERC20;
-
     // ─────────────────────────────────────────────────────────────────────────
     // Types
     // ─────────────────────────────────────────────────────────────────────────
@@ -51,7 +46,7 @@ contract PhantomVault is Ownable, ReentrancyGuard {
     struct Deal {
         address buyer;
         address seller;
-        uint256 amount;     // USDC amount (6 decimals)
+        uint256 amount;     // ETH amount in wei
         DealStatus status;
         uint256 lockedAt;
         uint256 expiresAt;
@@ -61,7 +56,6 @@ contract PhantomVault is Ownable, ReentrancyGuard {
     // State
     // ─────────────────────────────────────────────────────────────────────────
 
-    IERC20 public immutable usdc;
     address public operator;
 
     /// @dev bytes32 key = keccak256(utf8(dealId))
@@ -113,13 +107,10 @@ contract PhantomVault is Ownable, ReentrancyGuard {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * @param _usdc     ERC-20 token used for settlement (USDC, 6 decimals)
      * @param _operator Protocol wallet address that calls release/refund
      */
-    constructor(address _usdc, address _operator) Ownable(msg.sender) {
-        if (_usdc == address(0)) revert ZeroAddress();
+    constructor(address _operator) Ownable(msg.sender) {
         if (_operator == address(0)) revert ZeroAddress();
-        usdc = IERC20(_usdc);
         operator = _operator;
     }
 
@@ -128,20 +119,18 @@ contract PhantomVault is Ownable, ReentrancyGuard {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * @notice Lock USDC for a deal. Caller must have approved this contract first.
+     * @notice Lock ETH for a deal. Send the deal amount as msg.value.
      * @param dealKey      keccak256(utf8(dealId)) — the backend UUID converted to bytes32
-     * @param seller       Seller's ephemeral Ethereum address (receives funds on release)
-     * @param amount       USDC amount in base units (6 decimals)
-     * @param lockDuration Escrow duration in seconds (clamped to MIN/MAX_LOCK_DURATION)
+     * @param seller       Seller's ephemeral Ethereum address (receives ETH on release)
+     * @param lockDuration Escrow duration in seconds (MIN_LOCK_DURATION..MAX_LOCK_DURATION)
      */
     function deposit(
         bytes32 dealKey,
         address seller,
-        uint256 amount,
         uint256 lockDuration
-    ) external nonReentrant {
+    ) external payable nonReentrant {
         if (deals[dealKey].status != DealStatus.None) revert DealAlreadyExists();
-        if (amount == 0) revert ZeroAmount();
+        if (msg.value == 0) revert ZeroAmount();
         if (seller == address(0)) revert ZeroAddress();
         if (lockDuration < MIN_LOCK_DURATION || lockDuration > MAX_LOCK_DURATION) {
             revert LockDurationOutOfRange();
@@ -152,19 +141,17 @@ contract PhantomVault is Ownable, ReentrancyGuard {
         deals[dealKey] = Deal({
             buyer: msg.sender,
             seller: seller,
-            amount: amount,
+            amount: msg.value,
             status: DealStatus.Locked,
             lockedAt: block.timestamp,
             expiresAt: expiresAt
         });
 
-        usdc.safeTransferFrom(msg.sender, address(this), amount);
-
-        emit Locked(dealKey, msg.sender, seller, amount, expiresAt);
+        emit Locked(dealKey, msg.sender, seller, msg.value, expiresAt);
     }
 
     /**
-     * @notice Buyer self-recovers funds after the lock has expired and the
+     * @notice Buyer self-recovers ETH after the lock has expired and the
      *         operator has not yet acted.
      */
     function claimExpiredRefund(bytes32 dealKey) external nonReentrant {
@@ -175,9 +162,11 @@ contract PhantomVault is Ownable, ReentrancyGuard {
         if (msg.sender != deal.buyer) revert NotAuthorized();
 
         deal.status = DealStatus.Refunded;
-        usdc.safeTransfer(deal.buyer, deal.amount);
+        uint256 amount = deal.amount;
+        (bool ok, ) = deal.buyer.call{value: amount}("");
+        require(ok, "ETH transfer failed");
 
-        emit Refunded(dealKey, deal.buyer, deal.amount);
+        emit Refunded(dealKey, deal.buyer, amount);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -185,7 +174,7 @@ contract PhantomVault is Ownable, ReentrancyGuard {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * @notice Release escrowed funds to the seller after successful deal completion.
+     * @notice Release escrowed ETH to the seller after successful deal completion.
      *         Called by the protocol operator once 0G verification passes.
      */
     function release(bytes32 dealKey) external nonReentrant onlyOperator {
@@ -195,13 +184,15 @@ contract PhantomVault is Ownable, ReentrancyGuard {
         if (block.timestamp > deal.expiresAt) revert DealExpired();
 
         deal.status = DealStatus.Released;
-        usdc.safeTransfer(deal.seller, deal.amount);
+        uint256 amount = deal.amount;
+        (bool ok, ) = deal.seller.call{value: amount}("");
+        require(ok, "ETH transfer failed");
 
-        emit Released(dealKey, deal.seller, deal.amount);
+        emit Released(dealKey, deal.seller, amount);
     }
 
     /**
-     * @notice Refund escrowed funds to the buyer on deal failure or dispute.
+     * @notice Refund escrowed ETH to the buyer on deal failure or dispute.
      *         Called by the protocol operator.
      */
     function refund(bytes32 dealKey) external nonReentrant onlyOperator {
@@ -210,9 +201,11 @@ contract PhantomVault is Ownable, ReentrancyGuard {
         if (deal.status != DealStatus.Locked) revert DealNotLocked();
 
         deal.status = DealStatus.Refunded;
-        usdc.safeTransfer(deal.buyer, deal.amount);
+        uint256 amount = deal.amount;
+        (bool ok, ) = deal.buyer.call{value: amount}("");
+        require(ok, "ETH transfer failed");
 
-        emit Refunded(dealKey, deal.buyer, deal.amount);
+        emit Refunded(dealKey, deal.buyer, amount);
     }
 
     /**
