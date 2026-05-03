@@ -122,7 +122,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'phantom_accept_deal',
-    description: 'SELLER: Accept an incoming deal offer from a buyer.',
+    description: 'SELLER (or BUYER for self-deals): Accept an incoming deal offer. For self-deals (same wallet acting as buyer + seller), the buyer identity can also call this to unblock a deal stuck in MATCHMAKING status. Use phantom_deal_status to check current status first.',
+
     inputSchema: {
       type: 'object',
       properties: { deal_id: { type: 'string' } },
@@ -659,12 +660,19 @@ async function handleMyDeals(backendUrl: string) {
   if (!fetchOk) throw new Error(`Failed: ${JSON.stringify(data)}`)
   const deals = (Array.isArray(data) ? data : (data as { deals?: unknown[] }).deals ?? []) as Array<{ dealId: string; status: string; priceUSDC?: string }>
   if (!deals.length) return ok('NO_ACTIVE_DEALS')
-  const lines = deals.map(d =>
-    `  ${d.dealId}  ${d.status}  ${d.priceUSDC ?? '?'} ETH\n` +
-    `    └─ buyer-${d.dealId}.${ENS_PARENT}\n` +
-    `       seller-${d.dealId}.${ENS_PARENT}\n` +
-    `       deal-${d.dealId}.${ENS_PARENT}`
-  )
+  const lines = deals.map(d => {
+    const hint =
+      d.status === 'MATCHMAKING' ? `  ← phantom_accept_deal deal_id="${d.dealId}"  (stuck? call accept — works for self-deals too)` :
+      d.status === 'LOCKING'     ? `  ← phantom_lock_funds deal_id="${d.dealId}"` :
+      d.status === 'UPLOADING'   ? `  ← phantom_upload_payload deal_id="${d.dealId}"` :
+      ''
+    return (
+      `  ${d.dealId}  ${d.status}  ${d.priceUSDC ?? '?'} ETH${hint}\n` +
+      `    └─ buyer-${d.dealId}.${ENS_PARENT}\n` +
+      `       seller-${d.dealId}.${ENS_PARENT}\n` +
+      `       deal-${d.dealId}.${ENS_PARENT}`
+    )
+  })
   return ok(`YOUR DEALS (${deals.length})\n` + lines.join('\n'))
 }
 
@@ -673,9 +681,20 @@ async function handleDealStatus(args: { deal_id: string }, backendUrl: string) {
   const { ok: fetchOk, data } = await api('GET', `/api/deals/${args.deal_id}`, undefined, s.apiKey, backendUrl) as { ok: boolean; data: Record<string, unknown> }
   if (!fetchOk) throw new Error(`Deal not found: ${JSON.stringify(data)}`)
   const fields = Object.entries(data).map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`).join('\n')
+  const status = (data.status as string) ?? ''
+  const selfDealHint = (data.buyerEphemeralAddress as string)?.toLowerCase() === (data.sellerEphemeralAddress as string)?.toLowerCase()
+    ? ' (self-deal: buyer and seller share the same wallet)'
+    : ''
+  const nextAction =
+    status === 'MATCHMAKING'  ? `\nNEXT_ACTION: phantom_accept_deal deal_id="${args.deal_id}"  ← seller (or buyer for self-deals) must accept first${selfDealHint}` :
+    status === 'LOCKING'     ? `\nNEXT_ACTION: phantom_lock_funds deal_id="${args.deal_id}"` :
+    status === 'UPLOADING'   ? `\nNEXT_ACTION: phantom_upload_payload deal_id="${args.deal_id}"` :
+    status === 'EXECUTING'   ? `\nNEXT_ACTION: phantom_get_deal_result deal_id="${args.deal_id}"  (or call phantom_release_payment)` :
+    status === 'FAILED'      ? `\nNEXT_ACTION: phantom_refund deal_id="${args.deal_id}"  (deal failed — buyer can request refund)` :
+    ''
   return ok(
     `DEAL_STATUS\n${fields}\n\n` +
-    `${dealEnsBlock(args.deal_id)}`,
+    `${dealEnsBlock(args.deal_id)}${nextAction}`,
   )
 }
 
