@@ -96,8 +96,12 @@ const TOOLS: Tool[] = [
   {
     name: 'phantom_notifications',
     description:
-      'Poll for pending protocol events. Returns queued events and clears the queue. ' +
-      'Call regularly during active workflows.',
+      'Poll for pending protocol events (incoming deals, negotiation counters, status changes). ' +
+      'Returns queued events and clears the queue. ' +
+      'IMPORTANT: You MUST call this repeatedly while waiting — events are push-delivered via webhook. ' +
+      'Seller flow: after listing, call phantom_notifications every few seconds until NEGOTIATION_PROPOSAL or DEAL_OFFER arrives. ' +
+      'Buyer flow: after phantom_negotiate, call phantom_watch_negotiation to block until seller responds (preferred). ' +
+      'If no webhook events arrive, also call phantom_my_negotiations / phantom_my_deals to poll backend directly.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -335,7 +339,8 @@ const TOOLS: Tool[] = [
       'SELLER or BUYER: List all your price negotiations and their current status. ' +
       'SELLER: shows incoming buyer proposals you need to counter or accept. ' +
       'BUYER: shows your open bids and any counters from sellers. ' +
-      'Includes negotiation IDs, price rounds, and required next actions.',
+      'Includes negotiation IDs, price rounds, and required next actions. ' +
+      'POLLING: call this every few seconds while waiting, OR use phantom_watch_negotiation to block until a change occurs.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -353,10 +358,11 @@ const TOOLS: Tool[] = [
     name: 'phantom_watch_negotiation',
     description:
       'Block until a negotiation changes status or a new round is added (counter offer / acceptance / rejection). ' +
-      'Use this for fully autonomous deal flows: after sending a counter, call watch_negotiation to wait for the other party. ' +
-      'Returns immediately on any change with full state and next-action hint. ' +
-      'Times out after timeout_seconds (default 90) and returns current state so you can call again. ' +
-      'Typical loop: phantom_negotiate → phantom_watch_negotiation → counter/accept → phantom_watch_negotiation → ...',
+      'PREFERRED WAITING MECHANISM — use instead of polling phantom_notifications manually. ' +
+      'After phantom_negotiate (buyer) or phantom_counter_negotiation (seller), immediately call this to wait for the other party. ' +
+      'Returns immediately on any change with full state and NEXT_ACTION hint — follow the hint automatically. ' +
+      'Times out after timeout_seconds (default 90) — if timed out, call again to keep waiting. ' +
+      'Autonomous loop: phantom_negotiate → phantom_watch_negotiation → [counter or accept] → phantom_watch_negotiation → phantom_create_deal → phantom_lock_funds.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -526,7 +532,13 @@ async function handleListReport(
 
   if (!listOk || !listData.listingId) throw new Error(`Listing creation failed: ${listData.error}`)
 
-  return ok(`LISTED\nLISTING_ID: ${listData.listingId}\nOFFER_ID: ${offerData.offerId}\nTOPIC: ${args.topic}\nPRICE: ${args.price_eth} ETH (Sepolia)`)
+  return ok(
+    `LISTED\nLISTING_ID: ${listData.listingId}\nOFFER_ID: ${offerData.offerId}\nTOPIC: ${args.topic}\nPRICE: ${args.price_eth} ETH (Sepolia)\n\n` +
+    `NEXT_ACTION (SELLER — you must wait and respond):\n` +
+    `  phantom_my_negotiations          ← poll for incoming buyer proposals\n` +
+    `  OR phantom_notifications         ← poll for NEGOTIATION_PROPOSAL events\n` +
+    `  When proposal arrives → phantom_get_negotiation → phantom_counter_negotiation OR phantom_accept_negotiation`,
+  )
 }
 
 async function handleMyListings(backendUrl: string) {
@@ -535,8 +547,14 @@ async function handleMyListings(backendUrl: string) {
   if (!fetchOk) throw new Error(`Failed: ${JSON.stringify(data)}`)
   const listings = (data as Array<{ listingId: string; title: string; priceUSDC: number; category: string; active: boolean }>).filter(l => l.active)
   if (!listings.length) return ok('NO_ACTIVE_LISTINGS')
-  return ok(`YOUR LISTINGS (${listings.length})\n` + listings.map(l =>
-    `  ${l.listingId}  ${l.title.slice(0, 55).padEnd(55)}  ${l.priceUSDC} ETH  [${l.category}]`).join('\n'))
+  return ok(
+    `YOUR LISTINGS (${listings.length})\n` +
+    listings.map(l => `  ${l.listingId}  ${l.title.slice(0, 55).padEnd(55)}  ${l.priceUSDC} ETH  [${l.category}]`).join('\n') +
+    `\n\nSELLER WAITING LOOP:\n` +
+    `  phantom_my_negotiations  ← check for incoming proposals (call repeatedly)\n` +
+    `  phantom_my_deals         ← check for accepted deals awaiting your action\n` +
+    `  phantom_notifications    ← drain webhook event queue`,
+  )
 }
 
 async function handleAcceptDeal(args: { deal_id: string }, backendUrl: string) {
@@ -621,7 +639,10 @@ async function handleNegotiate(args: { listing_id: string; proposed_price_eth: n
     { listingId, proposedPrice: args.proposed_price_eth, message: args.message ?? `Opening bid` },
     s.apiKey, backendUrl) as { ok: boolean; data: { negotiationId?: string; status?: string; error?: string } }
   if (!negOk || !data.negotiationId) throw new Error(`Negotiation failed: ${data.error}`)
-  return ok(`NEGOTIATION_OPENED\nNEGOTIATION_ID: ${data.negotiationId}\nLISTING_ID: ${listingId}\nPROPOSED_PRICE: ${args.proposed_price_eth} ETH (Sepolia)`)
+  return ok(
+    `NEGOTIATION_OPENED\nNEGOTIATION_ID: ${data.negotiationId}\nLISTING_ID: ${listingId}\nPROPOSED_PRICE: ${args.proposed_price_eth} ETH (Sepolia)\n\n` +
+    `NEXT_ACTION: phantom_watch_negotiation negotiation_id="${data.negotiationId}"  ← blocks until seller responds`,
+  )
 }
 
 async function handleCreateDeal(args: { offer_id: string }, backendUrl: string) {
