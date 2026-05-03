@@ -20,13 +20,6 @@ export async function lockFundsInVault(args: {
   const rpcUrl    = args.rpcUrl       ?? getRpcUrl()
   const vaultAddr = args.vaultAddress ?? getVaultAddress()
 
-  if (!vaultAddr) {
-    throw new Error(
-      'VAULT_CONTRACT_ADDRESS not configured. ' +
-      'Set it in ~/.phantom/.env after deploying the contract.',
-    )
-  }
-
   const provider = new ethers.JsonRpcProvider(rpcUrl)
   const signer   = new ethers.Wallet(args.privateKey, provider)
   const vault    = new ethers.Contract(vaultAddr, VAULT_ABI, signer)

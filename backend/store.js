@@ -1,19 +1,130 @@
-// In-memory store — replace with Redis in production
+// Write-through MongoDB store — in-memory cache with async persistence.
+// Falls back to pure in-memory when MONGO_URI is not set.
+import { MongoClient } from 'mongodb';
 
-// Map<agentId, AgentRecord>
-export const agents = new Map();
+let db = null;
 
-// Map<hashedApiKey, agentId>
-export const apiKeys = new Map();
+/**
+ * MongoMap — drop-in Map replacement with MongoDB write-through.
+ *
+ * Reads are synchronous (in-memory cache — no latency change for routes).
+ * Writes (set / delete) persist to MongoDB fire-and-forget.
+ * Values returned by get() are Proxied so in-place property mutations
+ * (e.g. `deal.status = 'LOCKED'`) are also persisted on the next microtask.
+ */
+class MongoMap {
+  constructor(collectionName) {
+    this._name = collectionName;
+    this._map  = new Map();
+  }
 
-// Map<offerId, Offer>
-export const offers = new Map();
+  _col() {
+    return db?.collection(this._name);
+  }
 
-// Map<dealId, Deal>
-export const deals = new Map();
+  _persist(key, value) {
+    const col = this._col();
+    if (!col) return;
+    let doc;
+    if (typeof value === 'object' && value !== null) {
+      // Strip internal bookkeeping flags before storing
+      const { __pendingSave: _p, _id: _i, ...data } = value;
+      doc = { _id: key, ...data };
+    } else {
+      // Primitive values (e.g. apiKeys maps hash → agentId string)
+      doc = { _id: key, __primitiveValue: value };
+    }
+    col.replaceOne({ _id: key }, doc, { upsert: true })
+       .catch(err => console.error(`[MongoDB] ${this._name}.set(${key}):`, err.message));
+  }
 
-// Map<listingId, Listing>  — public capability registry (sellerAgentId kept private)
-export const listings = new Map();
+  // Return a Proxy so direct property mutations (obj.status = x) are persisted.
+  _proxy(key, obj) {
+    const self = this;
+    return new Proxy(obj, {
+      set(target, prop, val) {
+        target[prop] = val;
+        // Batch: one save per microtask — captures all same-tick mutations
+        if (!target.__pendingSave) {
+          target.__pendingSave = true;
+          Promise.resolve().then(() => {
+            delete target.__pendingSave;
+            self._persist(key, target);
+          });
+        }
+        return true;
+      },
+    });
+  }
 
-// Map<negotiationId, Negotiation>  — blind relay price negotiation sessions
-export const negotiations = new Map();
+  get(key) {
+    const v = this._map.get(key);
+    if (v == null || typeof v !== 'object') return v;
+    return this._proxy(key, v);
+  }
+
+  set(key, value) {
+    this._map.set(key, value);
+    this._persist(key, value);
+    return this;
+  }
+
+  delete(key) {
+    const existed = this._map.delete(key);
+    const col = this._col();
+    if (col && existed) {
+      col.deleteOne({ _id: key })
+         .catch(err => console.error(`[MongoDB] ${this._name}.delete(${key}):`, err.message));
+    }
+    return existed;
+  }
+
+  has(key)             { return this._map.has(key); }
+  values()             { return this._map.values(); }
+  entries()            { return this._map.entries(); }
+  keys()               { return this._map.keys(); }
+  get size()           { return this._map.size; }
+  [Symbol.iterator]()  { return this._map[Symbol.iterator](); }
+
+  async _load() {
+    if (!db) return;
+    const docs = await this._col().find({}).toArray();
+    for (const { _id, __primitiveValue, ...data } of docs) {
+      this._map.set(_id, __primitiveValue !== undefined ? __primitiveValue : data);
+    }
+    console.log(`[MongoDB] ${this._name}: loaded ${docs.length} docs`);
+  }
+}
+
+// ── Exported collections ──────────────────────────────────────────────────────
+
+export const agents      = new MongoMap('agents');
+export const apiKeys     = new MongoMap('apiKeys');
+export const offers      = new MongoMap('offers');
+export const deals       = new MongoMap('deals');
+export const listings    = new MongoMap('listings');
+export const negotiations = new MongoMap('negotiations');
+
+// ── DB init (call once before server starts) ──────────────────────────────────
+
+export async function initDB() {
+  const uri = process.env.MONGO_URI;
+  if (!uri) {
+    console.warn('[MongoDB] MONGO_URI not set — running with in-memory store only (no persistence)');
+    return;
+  }
+
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
+  await client.connect();
+  db = client.db(); // database name taken from URI
+  console.log('[MongoDB] Connected to', db.databaseName);
+
+  await Promise.all([
+    agents._load(),
+    apiKeys._load(),
+    offers._load(),
+    deals._load(),
+    listings._load(),
+    negotiations._load(),
+  ]);
+}

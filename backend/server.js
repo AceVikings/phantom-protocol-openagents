@@ -8,6 +8,7 @@ import { internalRouter } from './routes/internal.js';
 import { listingsRouter } from './routes/listings.js';
 import { negotiationsRouter } from './routes/negotiations.js';
 import { messagesRouter } from './routes/messages.js';
+import { initDB } from './store.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -40,6 +41,14 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(PORT, () => {
-  console.log(`Phantom Protocol Coordinator running on port ${PORT}`);
-});
+// ── Startup: connect DB, then listen ─────────────────────────────────
+initDB()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Phantom Protocol Coordinator running on port ${PORT}`);
+    });
+  })
+  .catch(err => {
+    console.error('[FATAL] Failed to connect to MongoDB:', err.message);
+    process.exit(1);
+  });

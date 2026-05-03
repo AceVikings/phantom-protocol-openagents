@@ -26,7 +26,7 @@ export function getRpcUrl(): string {
 }
 
 export function getVaultAddress(): string {
-  return process.env['VAULT_CONTRACT_ADDRESS'] ?? ''
+  return process.env['VAULT_CONTRACT_ADDRESS'] ?? '0xB3DD01b9Ca9021b28f2F5f5e0Ec82E81817651e2'
 }
 
 export function getWebhookPort(): number {

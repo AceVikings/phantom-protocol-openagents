@@ -233,13 +233,15 @@ const TOOLS: Tool[] = [
       'One-shot setup: creates a wallet if needed, registers with the coordinator, and saves session. ' +
       'Idempotent — safe to call again if already registered. ' +
       'Call this first before any other phantom tool. ' +
-      'Use the identity param to register separate buyer/seller personas (e.g. identity="buyer1", identity="seller1").',
+      'Use the identity param to register separate buyer/seller personas (e.g. identity="buyer1", identity="seller1"). ' +
+      'If you receive "Invalid API key" errors, the backend was restarted and lost its state — call phantom_init with force=true and the original role to re-register.',
     inputSchema: {
       type: 'object',
       properties: {
         role:         { type: 'string', enum: ['buyer', 'seller'], description: 'Agent role — required on first call.' },
         identity:     { type: 'string', description: 'Named persona (default: "default"). Use different names to run buyer and seller in the same session, e.g. identity="alice-seller".' },
         display_name: { type: 'string', description: 'Human-readable label stored with the identity (e.g. "Alice the Data Seller"). Shown in all outputs.' },
+        force:        { type: 'boolean', description: 'Force re-registration even if a session already exists. Use when the backend was restarted and the saved API key is no longer valid (error: "Invalid API key").' },
       },
     },
   },
@@ -749,7 +751,7 @@ async function handleMyNegotiations(backendUrl: string) {
   if (!fetchOk) throw new Error(`Failed: ${JSON.stringify(data)}`)
   const negs = data as Array<{
     negotiationId: string; listingId: string; listedPrice: number;
-    currentPrice: number; status: string; rounds: unknown[]; role: string
+    currentPrice: number; status: string; rounds: unknown[]; role: string; offerId?: string
   }>
   if (!negs.length) return ok('NO_NEGOTIATIONS\nNo active or past negotiations.')
 
@@ -757,10 +759,11 @@ async function handleMyNegotiations(backendUrl: string) {
     const action =
       n.status === 'PENDING'   && n.role === 'seller' ? ' ← COUNTER or ACCEPT needed' :
       n.status === 'COUNTERED' && n.role === 'buyer'  ? ' ← COUNTER or ACCEPT needed' :
-      n.status === 'ACCEPTED'                         ? ' ← CREATE DEAL now' : ''
+      n.status === 'ACCEPTED' && n.offerId            ? ` ← phantom_create_deal offer_id="${n.offerId}"` :
+      n.status === 'ACCEPTED'                         ? ' ← CREATE DEAL now (check notifications for offerId)' : ''
     return (
       `  ${n.negotiationId}  [${n.status.padEnd(9)}]  ` +
-      `listed ${n.listedPrice} → current ${n.currentPrice} ETH  ` + +
+      `listed ${n.listedPrice} → current ${n.currentPrice} ETH  ` +
       `${n.rounds.length} round(s)  [${n.role}]${action}`
     )
   })
@@ -785,13 +788,16 @@ async function handleGetNegotiation(args: { negotiation_id: string }, backendUrl
     `  [${i + 1}] ${r.by.toUpperCase().padEnd(6)}  ${r.price} ETH  "${r.message}"  ${new Date(r.at).toISOString().slice(11, 19)}`
   ).join('\n')
 
+  const offerId = data.offerId as string | undefined
   const actionHint =
     data.status === 'PENDING'   && data.role === 'seller' ?
       '\nNEXT_ACTION: phantom_counter_negotiation OR phantom_accept_negotiation' :
     data.status === 'COUNTERED' && data.role === 'buyer'  ?
       '\nNEXT_ACTION: phantom_counter_negotiation OR phantom_accept_negotiation' :
+    data.status === 'ACCEPTED' && offerId ?
+      `\nNEXT_ACTION: phantom_create_deal offer_id="${offerId}"` :
     data.status === 'ACCEPTED' ?
-      '\nNEXT_ACTION: phantom_create_deal (use offerId from NEGOTIATION_ACCEPTED notification)' :
+      '\nNEXT_ACTION: phantom_create_deal (check phantom_notifications for offerId)' :
     data.status === 'REJECTED' ?
       '\nSTATUS: Rejected — start a new negotiation with phantom_negotiate' : ''
 
@@ -800,19 +806,21 @@ async function handleGetNegotiation(args: { negotiation_id: string }, backendUrl
     `STATUS: ${data.status}   ROLE: ${data.role}\n` +
     `LISTED_PRICE: ${data.listedPrice} ETH   CURRENT_PRICE: ${data.currentPrice} ETH\n` +
     `LISTING_ID: ${data.listingId}\n` +
+    (offerId ? `OFFER_ID: ${offerId}\n` : '') +
     `ROUNDS:\n${rounds || '  (no rounds yet)'}` +
     actionHint,
   )
 }
 
 async function handleInit(
-  args: { role?: 'buyer' | 'seller'; identity?: string; display_name?: string },
+  args: { role?: 'buyer' | 'seller'; identity?: string; display_name?: string; force?: boolean },
   backendUrl: string,
   webhookHost: string,
   webhookPort: number,
 ) {
   setCurrentIdentity(args.identity ?? 'default')
   const identity = getCurrentIdentity()
+  if (args.force) clearSession()
   const existing = getSession()
   if (existing) {
     const w          = loadOrCreateWallet()
@@ -853,7 +861,7 @@ async function handleWatchNegotiation(
 
   type NegData = Record<string, unknown> & {
     rounds?: Array<{ by: string; price: number; message: string; at: number }>
-    status?: string; currentPrice?: number; listedPrice?: number; role?: string; listingId?: string
+    status?: string; currentPrice?: number; listedPrice?: number; role?: string; listingId?: string; offerId?: string
   }
 
   const fetchNeg = async (): Promise<NegData | null> => {
@@ -869,9 +877,10 @@ async function handleWatchNegotiation(
       `  [${i + 1}] ${r.by.toUpperCase().padEnd(6)}  ${r.price} ETH  "${r.message}"  ${new Date(r.at).toISOString().slice(11, 19)}`
     ).join('\n')
 
-  const actionHint = (status?: string, role?: string) =>
+  const actionHint = (status?: string, role?: string, offerId?: string) =>
     status === 'PENDING'   && role === 'seller' ? '\nNEXT_ACTION: phantom_counter_negotiation OR phantom_accept_negotiation' :
     status === 'COUNTERED' && role === 'buyer'  ? '\nNEXT_ACTION: phantom_counter_negotiation OR phantom_accept_negotiation' :
+    status === 'ACCEPTED' && offerId            ? `\nNEXT_ACTION: phantom_create_deal offer_id="${offerId}"` :
     status === 'ACCEPTED'                       ? '\nNEXT_ACTION: phantom_create_deal (check phantom_notifications for offerId)' :
     status === 'REJECTED'                       ? '\nNEXT_ACTION: Rejected — use phantom_negotiate to open a new negotiation' : ''
 
@@ -904,8 +913,9 @@ async function handleWatchNegotiation(
         `STATUS:         ${status}   ROLE: ${data.role}\n` +
         `LISTED_PRICE:   ${data.listedPrice} ETH   CURRENT_PRICE: ${data.currentPrice} ETH\n` +
         `LISTING_ID:     ${data.listingId}\n` +
+        (data.offerId ? `OFFER_ID:       ${data.offerId}\n` : '') +
         `ROUNDS:\n${formatRounds(data.rounds) || '  (no rounds yet)'}` +
-        actionHint(status, data.role as string),
+        actionHint(status, data.role as string, data.offerId),
       )
     }
 
@@ -918,9 +928,10 @@ async function handleWatchNegotiation(
   return ok(
     `WATCH_TIMEOUT\nNEGOTIATION_ID: ${args.negotiation_id}\n` +
     `STATUS: ${data.status}   CURRENT_PRICE: ${data.currentPrice} ETH   ROLE: ${data.role}\n` +
+    (data.offerId ? `OFFER_ID: ${data.offerId}\n` : '') +
     `No change detected in ${Math.min(args.timeout_seconds ?? 90, 300)}s.\n` +
     `Call phantom_watch_negotiation again to keep watching.` +
-    actionHint(data.status as string, data.role as string),
+    actionHint(data.status as string, data.role as string, data.offerId),
   )
 }
 
@@ -1086,7 +1097,7 @@ export async function startMcpServer(autoRole?: 'buyer' | 'seller'): Promise<voi
         case 'phantom_lock_funds':     return await handleLockFunds(args as { deal_id: string }, BACKEND_URL)
         case 'phantom_my_deals':       return await handleMyDeals(BACKEND_URL)
         case 'phantom_deal_status':    return await handleDealStatus(args as { deal_id: string }, BACKEND_URL)
-        case 'phantom_init':           return await handleInit(args as { role?: 'buyer' | 'seller'; identity?: string; display_name?: string }, BACKEND_URL, WEBHOOK_HOST, WEBHOOK_PORT)
+        case 'phantom_init':           return await handleInit(args as { role?: 'buyer' | 'seller'; identity?: string; display_name?: string; force?: boolean }, BACKEND_URL, WEBHOOK_HOST, WEBHOOK_PORT)
         case 'phantom_switch_identity':return await handleSwitchIdentity(args as { identity: string })
         case 'phantom_axl_info':       return handleAxlInfo()
         case 'phantom_send_axl_message': return await handleSendAxlMessage(args as Parameters<typeof handleSendAxlMessage>[0], BACKEND_URL)

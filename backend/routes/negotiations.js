@@ -151,7 +151,9 @@ negotiationsRouter.get('/', authenticate, (req, res) => {
   return res.json(mine.map(neg => {
     const isBuyer = neg.buyerAgentId === req.agentId;
     const { buyerAgentId, sellerAgentId, offerId, ...pub } = neg;
-    return { ...pub, role: isBuyer ? 'buyer' : 'seller' };
+    // Expose offerId only once accepted — both parties need it to proceed to deal creation
+    const extra = neg.status === 'ACCEPTED' ? { offerId } : {};
+    return { ...pub, ...extra, role: isBuyer ? 'buyer' : 'seller' };
   }));
 });
 
@@ -164,7 +166,8 @@ negotiationsRouter.get('/:id', authenticate, (req, res) => {
   const isSeller = neg.sellerAgentId === req.agentId;
   if (!isBuyer && !isSeller) return res.status(403).json({ error: 'Not a party' });
 
-  // Strip the counterparty's identity
+  // Strip the counterparty's identity; expose offerId only once accepted
   const { buyerAgentId, sellerAgentId, offerId, ...pub } = neg;
-  return res.json({ ...pub, role: isBuyer ? 'buyer' : 'seller' });
+  const extra = neg.status === 'ACCEPTED' ? { offerId } : {};
+  return res.json({ ...pub, ...extra, role: isBuyer ? 'buyer' : 'seller' });
 });
