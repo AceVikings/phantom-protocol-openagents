@@ -5,6 +5,7 @@ const links = [
   { label: 'Protocol', href: '#protocol' },
   { label: 'Architecture', href: '#architecture' },
   { label: 'How It Works', href: '#how-it-works' },
+  { label: 'CLI & MCP', href: '#cli' },
 ]
 
 export default function Nav() {

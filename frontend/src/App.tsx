@@ -3,6 +3,7 @@ import Hero from './components/Hero'
 import Stats from './components/Stats'
 import Architecture from './components/Architecture'
 import HowItWorks from './components/HowItWorks'
+import CLI from './components/CLI'
 import CTA from './components/CTA'
 import Footer from './components/Footer'
 import './App.css'
@@ -15,6 +16,7 @@ function App() {
       <Stats />
       <Architecture />
       <HowItWorks />
+      <CLI />
       <CTA />
       <Footer />
     </div>
