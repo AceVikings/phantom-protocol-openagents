@@ -90,10 +90,8 @@ jobs:
             --concurrency=100
           env_vars: |
             NODE_ENV=production
-            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
             PROTOCOL_PRIVATE_KEY=${{ secrets.PROTOCOL_PRIVATE_KEY }}
             INTERNAL_SECRET=${{ secrets.INTERNAL_SECRET }}
-            COORDINATOR_AXL_PUBKEY=${{ secrets.COORDINATOR_AXL_PUBKEY }}
             ZERO_G_RPC_URL=${{ secrets.ZERO_G_RPC_URL }}
             ZERO_G_STORAGE_URL=${{ secrets.ZERO_G_STORAGE_URL }}
             ZERO_G_PROVIDER_ADDRESS=${{ secrets.ZERO_G_PROVIDER_ADDRESS }}

@@ -24,7 +24,7 @@ Five privacy layers operate simultaneously on every deal:
 ┌─────────────────────────────────────────────────────────────────┐
 │  GENSYN AXL — Ed25519 encrypted P2P tunnel (negotiations)       │
 ├─────────────────────────────────────────────────────────────────┤
-│  ENS — Burner subnames under phantom.eth (identity masking)     │
+│  ENS — Burner subnames under phantom-protocol.eth (identity masking)  │
 ├─────────────────────────────────────────────────────────────────┤
 │  0G STORAGE — Decentralised payload vault (off-chain delivery)  │
 ├─────────────────────────────────────────────────────────────────┤
@@ -37,7 +37,7 @@ Five privacy layers operate simultaneously on every deal:
 | Layer | What it does |
 |---|---|
 | **Gensyn AXL** | All deal negotiations travel over end-to-end encrypted P2P. The coordinator never sees plaintext terms. |
-| **ENS** | Three ephemeral subnames are minted per deal (`buyer-XX`, `seller-XX`, `deal-XX` under `phantom.eth`) and burned at close. |
+| **ENS** | Three ephemeral subnames are minted per deal (`buyer-XX`, `seller-XX`, `deal-XX` under `phantom-protocol.eth`) and burned at close. |
 | **0G Storage** | The seller uploads the encrypted payload directly from their machine. Only the `rootHash` reaches the coordinator. |
 | **PhantomVault** | Buyer calls `deposit(dealKey, sellerAddress, lockDuration)` with native ETH. Funds held until KeeperHub triggers `payout()`. |
 | **KeeperHub** | Arbiter polls 0G until `rootHash` is confirmed, then calls `payout()`. Janitor burns ENS subnames 15 min after settlement. |
@@ -49,7 +49,7 @@ Five privacy layers operate simultaneously on every deal:
 | Step | Layer | What happens |
 |---|---|---|
 | 1 | AXL | Buyer and seller discover each other via coordinator; AXL pubkeys exchanged |
-| 2 | ENS | Coordinator mints three burner `phantom.eth` subnames |
+| 2 | ENS | Coordinator mints three burner `phantom-protocol.eth` subnames |
 | 3 | Vault | Buyer calls `deposit()` on PhantomVault — ETH locked in escrow |
 | 4 | 0G Storage | CLI uploads encrypted payload to 0G directly; coordinator receives `rootHash` only |
 | 5 | AXL | Seller sends decryption key to buyer over AXL tunnel |
@@ -65,7 +65,6 @@ phantom-protocol-openagents/
 ├── backend/          # Express.js coordinator (Node 18+, ESM)
 │   ├── routes/       # agents, offers, deals, listings, negotiations, messages
 │   ├── services/     # axl, ens, keeperhub, notify, zerog
-│   └── server.js
 ├── cli/              # phantom CLI — TypeScript, builds to dist/phantom.mjs
 │   └── src/
 │       ├── commands/ # wallet, agent, deal, transfer, deposit, mcp
@@ -278,7 +277,7 @@ The `phantom mcp` command starts a stdio MCP server compatible with Claude Deskt
 
 ## MCP Tools Reference
 
-21 tools available via MCP stdio transport.
+25 tools available via MCP stdio transport.
 
 ### Setup & Identity
 
@@ -296,6 +295,15 @@ The `phantom mcp` command starts a stdio MCP server compatible with Claude Deskt
 | `phantom_axl_info` | Show AXL pubkey, wallet, session status. Share pubkey for direct agent-to-agent messaging. |
 | `phantom_send_axl_message` | Send message via AXL relay. Params: `destination_axl_pubkey`, `message`, `deal_id` (optional). |
 | `phantom_read_axl_messages` | Drain AXL inbox. Returns up to 20 messages. |
+
+### Agent Communication
+
+| Tool | Description |
+|---|---|
+| `phantom_ask_seller` | **BUYER** — Send a question about a listing to the seller over AXL without revealing identity. Params: `listing_id`, `question`. |
+| `phantom_reply_to_inquiry` | **SELLER** — Reply to a buyer's data inquiry over AXL. Params: `buyer_axl_pubkey`, `listing_id`, `answer`. |
+| `phantom_my_negotiations` | List all active negotiations with status, latest price, and `NEXT_ACTION` hints. |
+| `phantom_get_negotiation` | Full round-by-round history for a negotiation + `NEXT_ACTION` hint. Params: `negotiation_id`. |
 
 ### Notifications
 
@@ -377,12 +385,17 @@ phantom mcp config               # Print Claude Desktop JSON snippet
 | Variable | Required | Description |
 |---|---|---|
 | `VAULT_CONTRACT_ADDRESS` | ✅ | `0xB3DD01b9Ca9021b28f2F5f5e0Ec82E81817651e2` |
-| `RPC_URL` | ✅ | Sepolia JSON-RPC endpoint |
-| `OPERATOR_PRIVATE_KEY` | ✅ | Vault operator private key |
-| `ENS_PRIVATE_KEY` | ✅ | Private key for ENS subname minting/burning |
+| `ETH_RPC_URL` | ✅ | Sepolia JSON-RPC endpoint |
+| `PROTOCOL_PRIVATE_KEY` | ✅ | Protocol wallet private key (mints ENS subnames, pays 0G gas) |
+| `ENS_PRIVATE_KEY` | ✅ | Private key for ENS NameWrapper operations |
+| `ENS_PARENT_NAME` | ✅ | `phantom-protocol.eth` |
+| `ENS_NAME_WRAPPER` | ✅ | ENS NameWrapper contract on Sepolia (`0x0635513f179D50A207757E05759CbD106d7dFcE8`) |
+| `ZERO_G_RPC_URL` | ✅ | 0G Galileo RPC (`https://evmrpc-testnet.0g.ai`) |
+| `ZERO_G_STORAGE_URL` | ✅ | 0G Storage indexer URL |
+| `ZERO_G_PROVIDER_ADDRESS` | optional | 0G Compute provider address |
 | `COORDINATOR_AXL_API` | optional | AXL node base URL (default: `http://127.0.0.1:9002`) |
-| `COORDINATOR_AXL_PUBKEY` | optional | This coordinator's Ed25519 AXL public key |
-| `ZEROG_PRIVATE_KEY` | optional | For 0G Storage verification |
+| `KH_API_KEY` | optional | KeeperHub API key for arbiter + janitor workflows |
+| `INTERNAL_SECRET` | optional | Shared secret for KeeperHub → backend internal webhooks |
 | `PORT` | optional | HTTP port (default: `3001`) |
 
 ### CLI (`PHANTOM_*` env vars)
@@ -406,7 +419,7 @@ phantom mcp config               # Print Claude Desktop JSON snippet
 | MCP Server | `@modelcontextprotocol/sdk`, stdio transport |
 | P2P Messaging | Gensyn AXL (Ed25519 E2E encrypted) |
 | Decentralised Storage | 0G Storage (Galileo testnet) |
-| Identity | ENS subnames under `phantom.eth` |
+| Identity | ENS subnames under `phantom-protocol.eth` |
 | Automation | KeeperHub (Arbiter + Janitor workflows) |
 | Frontend | React 19, Vite, TypeScript, Tailwind CSS v4, Framer Motion |
 

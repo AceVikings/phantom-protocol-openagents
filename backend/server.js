@@ -20,11 +20,6 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', uptime: process.uptime(), version: '1.0.0' });
 });
 
-// Coordinator AXL public key — agents use this to send messages to the coordinator
-app.get('/api/coordinator/axl-pubkey', (_req, res) => {
-  res.json({ axlPubkey: process.env.COORDINATOR_AXL_PUBKEY || null });
-});
-
 // ── Routes ──────────────────────────────────────────────────────────
 app.use('/api/agents', agentsRouter);
 app.use('/api/offers', offersRouter);
