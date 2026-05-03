@@ -354,9 +354,31 @@ async function handleBalance() {
 function handleNotifications() {
   const events = drainNotifications()
   if (!events.length) return ok('NO_PENDING_EVENTS')
-  const lines = events.map(({ ts, event }) =>
-    `[${new Date(ts).toISOString().slice(11, 19)}] ${JSON.stringify(event)}`)
-  return ok(`EVENTS (${events.length})\n${lines.join('\n')}\n\nQueue cleared.`)
+
+  const lines = events.map(({ ts, event }) => {
+    const e = event as Record<string, unknown>
+    const time = new Date(ts).toISOString().slice(11, 19)
+    const type = (e.event as string) ?? 'UNKNOWN'
+
+    let action = ''
+    if (type === 'NEGOTIATION_PROPOSAL') {
+      action = `  → phantom_my_negotiations  (then phantom_get_negotiation negotiation_id="${e.negotiationId}")`
+    } else if (type === 'NEGOTIATION_COUNTER') {
+      action = `  → phantom_get_negotiation negotiation_id="${e.negotiationId}"  (then counter or accept)`
+    } else if (type === 'NEGOTIATION_ACCEPTED') {
+      action = `  → phantom_create_deal offer_id="${e.offerId}"  (then phantom_lock_funds)`
+    } else if (type === 'NEGOTIATION_REJECTED') {
+      action = `  → phantom_negotiate to try again or find another listing`
+    } else if (type === 'DEAL_LOCKED') {
+      action = `  → phantom_upload_payload deal_id="${e.dealId}"`
+    } else if (type === 'DEAL_SETTLED') {
+      action = `  → Deal complete. Funds released.`
+    }
+
+    return `[${time}] ${type}  ${JSON.stringify(e)}\n${action}`
+  })
+
+  return ok(`EVENTS (${events.length})\n\n${lines.join('\n\n')}\n\nQueue cleared.`)
 }
 
 async function handleListReport(
@@ -529,7 +551,138 @@ async function handleDealStatus(args: { deal_id: string }, backendUrl: string) {
 
 // ── AXL handlers ─────────────────────────────────────────────────────────────
 
-async function handleInit(
+async function handleAskSeller(
+  args: { listing_id: string; question: string },
+  backendUrl: string,
+) {
+  const s = requireSession()
+  const w = loadOrCreateWallet()
+  const myAxlPubkey = walletToAxlPubkey(w.address)
+
+  // Fetch seller's AXL pubkey via the blind contact endpoint — no agentId exposed
+  const { ok: contactOk, data: contact } = await api(
+    'GET', `/api/listings/${args.listing_id}/contact`,
+    undefined, undefined, backendUrl,
+  ) as { ok: boolean; data: { sellerAxlPubkey?: string; error?: string } }
+
+  if (!contactOk || !contact.sellerAxlPubkey) {
+    throw new Error(`Cannot reach seller for listing ${args.listing_id}: ${contact.error ?? 'not found'}`)
+  }
+
+  const payload = {
+    type: 'data_inquiry',
+    fromAxlPubkey: myAxlPubkey,
+    listingId: args.listing_id,
+    question: args.question,
+    timestamp: new Date().toISOString(),
+  }
+
+  const { ok: sendOk, data } = await api(
+    'POST', '/api/messages/send',
+    { destinationAxlPubkey: contact.sellerAxlPubkey, payload },
+    s.apiKey, backendUrl,
+  ) as { ok: boolean; data: { error?: string } }
+
+  if (!sendOk) throw new Error(`Failed to send inquiry: ${data.error ?? JSON.stringify(data)}`)
+
+  return ok(
+    `INQUIRY_SENT\nLISTING_ID: ${args.listing_id}\nQUESTION: ${args.question}\n\n` +
+    `The seller will receive your question encrypted via AXL.\n` +
+    `Your AXL pubkey (for seller to reply): ${myAxlPubkey}\n\n` +
+    `Use phantom_read_axl_messages to check for the seller's reply.`,
+  )
+}
+
+async function handleReplyToInquiry(
+  args: { buyer_axl_pubkey: string; listing_id: string; answer: string },
+  backendUrl: string,
+) {
+  const s = requireSession()
+
+  const payload = {
+    type: 'data_inquiry_reply',
+    listingId: args.listing_id,
+    answer: args.answer,
+    timestamp: new Date().toISOString(),
+  }
+
+  const { ok: sendOk, data } = await api(
+    'POST', '/api/messages/send',
+    { destinationAxlPubkey: args.buyer_axl_pubkey, payload },
+    s.apiKey, backendUrl,
+  ) as { ok: boolean; data: { error?: string } }
+
+  if (!sendOk) throw new Error(`Failed to send reply: ${data.error ?? JSON.stringify(data)}`)
+
+  return ok(
+    `REPLY_SENT\nTO_BUYER: ${args.buyer_axl_pubkey}\nLISTING_ID: ${args.listing_id}\n` +
+    `ANSWER: ${args.answer}\n\nThe buyer will receive your reply via AXL. Raw data was NOT sent.`,
+  )
+}
+
+async function handleMyNegotiations(backendUrl: string) {
+  const s = requireSession()
+  const { ok: fetchOk, data } = await api('GET', '/api/negotiations', undefined, s.apiKey, backendUrl)
+  if (!fetchOk) throw new Error(`Failed: ${JSON.stringify(data)}`)
+  const negs = data as Array<{
+    negotiationId: string; listingId: string; listedPrice: number;
+    currentPrice: number; status: string; rounds: unknown[]; role: string
+  }>
+  if (!negs.length) return ok('NO_NEGOTIATIONS\nNo active or past negotiations.')
+
+  const lines = negs.map(n => {
+    const action =
+      n.status === 'PENDING'   && n.role === 'seller' ? ' ← COUNTER or ACCEPT needed' :
+      n.status === 'COUNTERED' && n.role === 'buyer'  ? ' ← COUNTER or ACCEPT needed' :
+      n.status === 'ACCEPTED'                         ? ' ← CREATE DEAL now' : ''
+    return (
+      `  ${n.negotiationId.slice(0, 8)}…  [${n.status.padEnd(9)}]  ` +
+      `listed ${n.listedPrice} → current ${n.currentPrice} USDC  ` +
+      `${n.rounds.length} round(s)  [${n.role}]${action}`
+    )
+  })
+  return ok(
+    `YOUR NEGOTIATIONS (${negs.length})\n${lines.join('\n')}\n\n` +
+    `Use phantom_get_negotiation negotiation_id=<id> for full round history and action hints.`,
+  )
+}
+
+async function handleGetNegotiation(args: { negotiation_id: string }, backendUrl: string) {
+  const s = requireSession()
+  const { ok: fetchOk, data } = await api(
+    'GET', `/api/negotiations/${args.negotiation_id}`,
+    undefined, s.apiKey, backendUrl,
+  ) as { ok: boolean; data: Record<string, unknown> & {
+    rounds?: Array<{ by: string; price: number; message: string; at: number }>;
+    status?: string; currentPrice?: number; listedPrice?: number; role?: string;
+  }}
+  if (!fetchOk) throw new Error(`Negotiation not found: ${JSON.stringify(data)}`)
+
+  const rounds = (data.rounds ?? []).map((r, i) =>
+    `  [${i + 1}] ${r.by.toUpperCase().padEnd(6)}  ${r.price} USDC  "${r.message}"  ${new Date(r.at).toISOString().slice(11, 19)}`
+  ).join('\n')
+
+  const actionHint =
+    data.status === 'PENDING'   && data.role === 'seller' ?
+      '\nNEXT_ACTION: phantom_counter_negotiation OR phantom_accept_negotiation' :
+    data.status === 'COUNTERED' && data.role === 'buyer'  ?
+      '\nNEXT_ACTION: phantom_counter_negotiation OR phantom_accept_negotiation' :
+    data.status === 'ACCEPTED' ?
+      '\nNEXT_ACTION: phantom_create_deal (use offerId from NEGOTIATION_ACCEPTED notification)' :
+    data.status === 'REJECTED' ?
+      '\nSTATUS: Rejected — start a new negotiation with phantom_negotiate' : ''
+
+  return ok(
+    `NEGOTIATION: ${args.negotiation_id}\n` +
+    `STATUS: ${data.status}   ROLE: ${data.role}\n` +
+    `LISTED_PRICE: ${data.listedPrice} USDC   CURRENT_PRICE: ${data.currentPrice} USDC\n` +
+    `LISTING_ID: ${data.listingId}\n` +
+    `ROUNDS:\n${rounds || '  (no rounds yet)'}` +
+    actionHint,
+  )
+}
+
+
   args: { role?: 'buyer' | 'seller' },
   backendUrl: string,
   webhookHost: string,
@@ -591,9 +744,39 @@ async function handleReadAxlMessages(backendUrl: string) {
   if (!fetchOk) throw new Error(`Inbox fetch failed: ${JSON.stringify(data)}`)
   const messages = data as Array<{ fromPeerId?: string; message: unknown }>
   if (!messages.length) return ok('INBOX_EMPTY\nNo pending AXL messages.')
-  const lines = messages.map((m, i) =>
-    `  [${i + 1}] FROM: ${m.fromPeerId ?? 'unknown'}\n      ${JSON.stringify(m.message)}`)
-  return ok(`AXL INBOX (${messages.length})\n${lines.join('\n')}`)
+
+  const lines = messages.map((m, i) => {
+    const msg = m.message as Record<string, unknown>
+    const type    = (msg?.type as string) ?? 'unknown'
+    const from    = m.fromPeerId ?? (msg?.fromAxlPubkey as string) ?? 'unknown'
+    const dealId  = (msg?.dealId as string) ?? null
+    const listingId = (msg?.listingId as string) ?? null
+
+    let body = ''
+    let action = ''
+
+    if (type === 'data_inquiry') {
+      body   = `QUESTION: ${msg.question}`
+      action = `ACTION: phantom_reply_to_inquiry buyer_axl_pubkey="${from}" listing_id="${listingId}" answer="<your answer>"`
+    } else if (type === 'data_inquiry_reply') {
+      body   = `ANSWER: ${msg.answer}`
+      action = `ACTION: If satisfied, phantom_negotiate listing_id="${listingId}" proposed_price_usdc=<price>`
+    } else if (type === 'agent_message') {
+      body   = `MESSAGE: ${msg.message}`
+      action = dealId ? `DEAL_ID: ${dealId}` : ''
+    } else {
+      body = JSON.stringify(msg)
+    }
+
+    return (
+      `[${i + 1}] TYPE: ${type}  FROM: ${from.slice(0, 16)}…\n` +
+      (listingId ? `     LISTING: ${listingId}\n` : '') +
+      `     ${body}\n` +
+      (action ? `     ${action}` : '')
+    )
+  })
+
+  return ok(`AXL INBOX (${messages.length} message${messages.length === 1 ? '' : 's'})\n\n${lines.join('\n\n')}`)
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -663,6 +846,10 @@ export async function startMcpServer(autoRole?: 'buyer' | 'seller'): Promise<voi
         case 'phantom_axl_info':       return handleAxlInfo()
         case 'phantom_send_axl_message': return await handleSendAxlMessage(args as Parameters<typeof handleSendAxlMessage>[0], BACKEND_URL)
         case 'phantom_read_axl_messages': return await handleReadAxlMessages(BACKEND_URL)
+        case 'phantom_ask_seller':        return await handleAskSeller(args as Parameters<typeof handleAskSeller>[0], BACKEND_URL)
+        case 'phantom_reply_to_inquiry':  return await handleReplyToInquiry(args as Parameters<typeof handleReplyToInquiry>[0], BACKEND_URL)
+        case 'phantom_my_negotiations':   return await handleMyNegotiations(BACKEND_URL)
+        case 'phantom_get_negotiation':   return await handleGetNegotiation(args as { negotiation_id: string }, BACKEND_URL)
         default:                       return err(`Unknown tool: ${name}`)
       }
     } catch (e: unknown) {
