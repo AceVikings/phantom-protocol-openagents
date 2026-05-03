@@ -689,17 +689,23 @@ async function handleMyDeals(backendUrl: string) {
   if (!fetchOk) throw new Error(`Failed: ${JSON.stringify(data)}`)
   const deals = (Array.isArray(data) ? data : (data as { deals?: unknown[] }).deals ?? []) as Array<{ dealId: string; status: string; priceUSDC?: string }>
   if (!deals.length) return ok('NO_ACTIVE_DEALS')
-  const lines = deals.map(d => {
+  const lines = (deals as Array<{ dealId: string; status: string; priceUSDC?: string; lockTxHash?: string; txHash?: string; rootHash?: string }>).map(d => {
     const hint =
       d.status === 'MATCHMAKING' ? `  ← phantom_accept_deal deal_id="${d.dealId}"  (stuck? call accept — works for self-deals too)` :
       d.status === 'LOCKING'     ? `  ← phantom_lock_funds deal_id="${d.dealId}"` :
       d.status === 'UPLOADING'   ? `  ← phantom_upload_payload deal_id="${d.dealId}"` :
       ''
+    const txLine = [
+      d.lockTxHash ? `    🔗 ETH: https://sepolia.etherscan.io/tx/${d.lockTxHash}` : '',
+      d.txHash     ? `    🔗 0G:  https://chainscan-galileo.0g.ai/tx/${d.txHash}` : '',
+      d.rootHash   ? `    📦 rootHash: ${d.rootHash}` : '',
+    ].filter(Boolean).join('\n')
     return (
       `  ${d.dealId}  ${d.status}  ${d.priceUSDC ?? '?'} ETH${hint}\n` +
       `    └─ buyer-${d.dealId}.${ENS_PARENT}\n` +
       `       seller-${d.dealId}.${ENS_PARENT}\n` +
-      `       deal-${d.dealId}.${ENS_PARENT}`
+      `       deal-${d.dealId}.${ENS_PARENT}` +
+      (txLine ? `\n${txLine}` : '')
     )
   })
   return ok(`YOUR DEALS (${deals.length})\n` + lines.join('\n'))
@@ -721,8 +727,20 @@ async function handleDealStatus(args: { deal_id: string }, backendUrl: string) {
     status === 'EXECUTING'   ? `\nNEXT_ACTION: phantom_get_deal_result deal_id="${args.deal_id}"  (or call phantom_release_payment)` :
     status === 'FAILED'      ? `\nNEXT_ACTION: phantom_refund deal_id="${args.deal_id}"  (deal failed — buyer can request refund)` :
     ''
+
+  // Explorer links for on-chain transactions
+  const lockTx  = data.lockTxHash  as string | undefined
+  const zerogTx = data.txHash       as string | undefined
+  const rootHash = data.rootHash    as string | undefined
+  const txLinks = [
+    lockTx  ? `  ETH (Sepolia vault lock) : https://sepolia.etherscan.io/tx/${lockTx}` : '',
+    zerogTx ? `  0G Storage upload tx    : https://chainscan-galileo.0g.ai/tx/${zerogTx}` : '',
+    rootHash ? `  0G file root hash       : ${rootHash}` : '',
+  ].filter(Boolean).join('\n')
+
   return ok(
     `DEAL_STATUS\n${fields}\n\n` +
+    (txLinks ? `━━ ON-CHAIN TRANSACTIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n${txLinks}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` : '') +
     `${dealEnsBlock(args.deal_id)}${nextAction}`,
   )
 }
