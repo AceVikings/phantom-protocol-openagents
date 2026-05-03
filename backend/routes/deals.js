@@ -111,11 +111,16 @@ dealsRouter.get('/:dealId', authenticate, (req, res) => {
   res.json(safe);
 });
 
-// POST /api/deals/:dealId/accept — seller accepts
+// POST /api/deals/:dealId/accept — seller accepts (buyer may also accept for self-deals)
 dealsRouter.post('/:dealId/accept', authenticate, async (req, res) => {
   const deal = deals.get(req.params.dealId);
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
-  if (deal.sellerAgentId !== req.agentId) return res.status(403).json({ error: 'Not your deal' });
+
+  const isSelfDeal =
+    deal.buyerAgentId === deal.sellerAgentId ||
+    deal.buyerEphemeralAddress?.toLowerCase() === deal.sellerEphemeralAddress?.toLowerCase();
+  const isParty = deal.sellerAgentId === req.agentId || (isSelfDeal && deal.buyerAgentId === req.agentId);
+  if (!isParty) return res.status(403).json({ error: 'Not your deal' });
   if (deal.status !== DealStatus.MATCHMAKING) {
     return res.status(409).json({ error: `Deal is in ${deal.status}, expected MATCHMAKING` });
   }
