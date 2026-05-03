@@ -103,10 +103,7 @@ const mcpConfig = `{
   "mcpServers": {
     "phantom": {
       "command": "phantom",
-      "args": ["mcp", "--role", "buyer"],
-      "env": {
-        "PHANTOM_BACKEND_URL": "https://coordinator.example.com"
-      }
+      "args": ["mcp"]
     }
   }
 }`

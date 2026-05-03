@@ -35,9 +35,6 @@ export function cmdMcpConfig(): void {
       phantom: {
         command: 'phantom',
         args:    agentId ? ['mcp', '--agent', agentId] : ['mcp'],
-        env:     {
-          PHANTOM_BACKEND_URL: 'https://phantom-backend-672452518519.us-central1.run.app',
-        },
       },
     },
   }

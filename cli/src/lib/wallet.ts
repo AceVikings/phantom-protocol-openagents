@@ -9,9 +9,15 @@ import { ethers }          from 'ethers'
 import { homedir }         from 'node:os'
 import { join }            from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
+import { getCurrentIdentity } from './state.js'
 
 const WALLET_DIR  = join(homedir(), '.phantom')
 const WALLET_FILE = join(WALLET_DIR, 'wallet.json')
+
+function getWalletFile(): string {
+  const id = getCurrentIdentity()
+  return id === 'default' ? WALLET_FILE : join(WALLET_DIR, `${id}-wallet.json`)
+}
 
 export interface WalletInfo {
   address: string
@@ -24,9 +30,10 @@ export function loadOrCreateWallet(): WalletInfo {
     return { address: w.address, privateKey: w.privateKey }
   }
 
-  if (existsSync(WALLET_FILE)) {
+  const file = getWalletFile()
+  if (existsSync(file)) {
     try {
-      const json = JSON.parse(readFileSync(WALLET_FILE, 'utf8')) as WalletInfo
+      const json = JSON.parse(readFileSync(file, 'utf8')) as WalletInfo
       if (json.privateKey && json.address) return json
     } catch { /* fall through to regenerate */ }
   }
@@ -34,7 +41,7 @@ export function loadOrCreateWallet(): WalletInfo {
   mkdirSync(WALLET_DIR, { recursive: true })
   const w = ethers.Wallet.createRandom()
   const info: WalletInfo = { address: w.address, privateKey: w.privateKey }
-  writeFileSync(WALLET_FILE, JSON.stringify(info, null, 2), { mode: 0o600 })
+  writeFileSync(file, JSON.stringify(info, null, 2), { mode: 0o600 })
   return info
 }
 

@@ -16,7 +16,8 @@ import { api }                             from './api.js'
 import { lockFundsInVault }               from './vault.js'
 import { uploadToZeroG, getZeroGBalance }  from './zerog.js'
 import {
-  loadSession, saveSession, getSession,
+  loadSession, saveSession, getSession, clearSession,
+  getCurrentIdentity, setCurrentIdentity,
   storeOfferPayload, getDealPayload, deleteDealPayload,
   drainNotifications,
 } from './state.js'
@@ -38,6 +39,31 @@ function requireSession() {
 
 function walletToAxlPubkey(address: string): string {
   return createHash('sha256').update(address).digest('hex')
+}
+
+const ENS_PARENT = 'phantom-protocol.eth'
+function ensLine(role: string): string {
+  return `ENS: ${role}-<dealId>.${ENS_PARENT}  (subname minted when deal starts)`
+}
+
+function dealEnsBlock(dealId: string): string {
+  return (
+    `ENS SUBNAMES (ephemeral, Sepolia NameWrapper — each deal gets unique on-chain identities)
+` +
+    `  buyer-${dealId}.${ENS_PARENT}  →  buyer's ephemeral address\n` +
+    `  seller-${dealId}.${ENS_PARENT}  →  seller's ephemeral address\n` +
+    `  deal-${dealId}.${ENS_PARENT}   →  vault escrow address`
+  )
+}
+
+async function fetchBalances(address: string): Promise<string> {
+  const [ethBal, ogRaw] = await Promise.all([
+    getEthBalance(address).catch(() => null),
+    getZeroGBalance(address).catch(() => null),
+  ])
+  const eth = ethBal ? `${parseFloat(ethBal.eth).toFixed(6)} ETH` : 'unknown'
+  const og  = ogRaw  ? `${parseFloat(ogRaw).toFixed(6)} OG`        : 'unknown'
+  return `  ETH (Sepolia): ${eth}\n  OG  (0G):      ${og}`
 }
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
@@ -206,12 +232,29 @@ const TOOLS: Tool[] = [
     description:
       'One-shot setup: creates a wallet if needed, registers with the coordinator, and saves session. ' +
       'Idempotent — safe to call again if already registered. ' +
-      'Call this first before any other phantom tool.',
+      'Call this first before any other phantom tool. ' +
+      'Use the identity param to register separate buyer/seller personas (e.g. identity="buyer1", identity="seller1").',
     inputSchema: {
       type: 'object',
       properties: {
-        role: { type: 'string', enum: ['buyer', 'seller'], description: 'Agent role — required: buyer or seller.' },
+        role:         { type: 'string', enum: ['buyer', 'seller'], description: 'Agent role — required on first call.' },
+        identity:     { type: 'string', description: 'Named persona (default: "default"). Use different names to run buyer and seller in the same session, e.g. identity="alice-seller".' },
+        display_name: { type: 'string', description: 'Human-readable label stored with the identity (e.g. "Alice the Data Seller"). Shown in all outputs.' },
       },
+    },
+  },
+  {
+    name: 'phantom_switch_identity',
+    description:
+      'Switch the active persona to a previously registered identity. ' +
+      'After switching, all tools act as the switched-to identity. ' +
+      'Use phantom_init to create a new identity, then phantom_switch_identity to toggle between them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        identity: { type: 'string', description: 'The identity name to switch to (must have been created with phantom_init).' },
+      },
+      required: ['identity'],
     },
   },
   {
@@ -299,12 +342,29 @@ const TOOLS: Tool[] = [
       required: ['negotiation_id'],
     },
   },
+  {
+    name: 'phantom_watch_negotiation',
+    description:
+      'Block until a negotiation changes status or a new round is added (counter offer / acceptance / rejection). ' +
+      'Use this for fully autonomous deal flows: after sending a counter, call watch_negotiation to wait for the other party. ' +
+      'Returns immediately on any change with full state and next-action hint. ' +
+      'Times out after timeout_seconds (default 90) and returns current state so you can call again. ' +
+      'Typical loop: phantom_negotiate → phantom_watch_negotiation → counter/accept → phantom_watch_negotiation → ...',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        negotiation_id:  { type: 'string', description: 'The negotiation UUID to watch.' },
+        timeout_seconds: { type: 'number',  description: 'Max seconds to wait before returning (default 90, max 300).' },
+      },
+      required: ['negotiation_id'],
+    },
+  },
 ]
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
 async function handleRegister(
-  args: { role: 'buyer' | 'seller' },
+  args: { role: 'buyer' | 'seller'; displayName?: string },
   backendUrl: string,
   webhookHost: string,
   webhookPort: number,
@@ -323,18 +383,56 @@ async function handleRegister(
     throw new Error(`Registration failed: ${data.error ?? JSON.stringify(data)}`)
   }
 
-  saveSession({ agentId: data.agentId, apiKey: data.apiKey, role: args.role, webhookPort, backendUrl })
+  saveSession({
+    agentId: data.agentId, apiKey: data.apiKey, role: args.role,
+    webhookPort, backendUrl, displayName: args.displayName,
+  })
+
+  const identity   = getCurrentIdentity()
+  const sessionPath = identity === 'default' ? '~/.phantom/session.json' : `~/.phantom/${identity}-session.json`
+  const label      = args.displayName ? `${args.displayName} (${identity})` : identity
+  const balances   = await fetchBalances(wallet.address)
 
   return ok(
-    `REGISTERED\nAGENT_ID: ${data.agentId}\nROLE: ${args.role}\n` +
-    `WALLET: ${wallet.address}\nWEBHOOK: ${webhookUrl}\n` +
-    `\nSession saved to ~/.phantom/session.json`,
+    `REGISTERED\n` +
+    `IDENTITY:   ${label}\n` +
+    `AGENT_ID:   ${data.agentId}\n` +
+    `ROLE:       ${args.role}\n` +
+    `\n━━ WALLET (Sepolia) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `  ADDRESS:  ${wallet.address}\n` +
+    `  AXL KEY:  ${axlPubkey}\n` +
+    `  ENS:      ${args.role}-<dealId>.${ENS_PARENT}  (per-deal ephemeral)\n` +
+    `${balances}\n` +
+    `\n  ⚡ FUND THIS ADDRESS to participate in the marketplace:\n` +
+    `     Sepolia ETH → https://sepoliafaucet.com  (for gas + escrow)\n` +
+    `     0G OG       → https://hub.0g.ai/faucet   (for data storage)\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `WEBHOOK:    ${webhookUrl}\n` +
+    `SESSION:    ${sessionPath}`,
   )
 }
 
 async function handleWallet() {
-  const w = loadOrCreateWallet()
-  return ok(`WALLET (Sepolia)\nADDRESS: ${w.address}\nEXPLORER: https://sepolia.etherscan.io/address/${w.address}\nKEY FILE: ~/.phantom/wallet.json`)
+  const w        = loadOrCreateWallet()
+  const s        = getSession()
+  const identity = getCurrentIdentity()
+  const walletPath = identity === 'default' ? '~/.phantom/wallet.json' : `~/.phantom/${identity}-wallet.json`
+  const label    = s?.displayName ? `${s.displayName} (${identity})` : identity
+  const balances = await fetchBalances(w.address)
+  const ensInfo  = s ? `\n  ENS:      ${s.role}-<dealId>.${ENS_PARENT}  (per-deal ephemeral)` : ''
+  return ok(
+    `WALLET\n` +
+    `IDENTITY:  ${label}\n` +
+    `\n━━ WALLET (Sepolia) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `  ADDRESS:  ${w.address}${ensInfo}\n` +
+    `${balances}\n` +
+    `\n  ⚡ SEND FUNDS TO THIS ADDRESS:\n` +
+    `     Sepolia ETH → https://sepoliafaucet.com\n` +
+    `     0G OG       → https://hub.0g.ai/faucet\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `EXPLORER:  https://sepolia.etherscan.io/address/${w.address}\n` +
+    `KEY FILE:  ${walletPath}`,
+  )
 }
 
 async function handleBalance() {
@@ -343,11 +441,22 @@ async function handleBalance() {
     getEthBalance(w.address),
     getZeroGBalance(w.address).catch(() => null),
   ])
-  const ogLine = ogRaw !== null ? `\nOG (0G Galileo): ${parseFloat(ogRaw).toFixed(6)} OG` : ''
+  const eth = parseFloat(sepoliaBalance.eth).toFixed(6)
+  const og  = ogRaw !== null ? parseFloat(ogRaw).toFixed(6) : null
+  const identity = getCurrentIdentity()
+  const s = getSession()
+  const label = s?.displayName ? `${s.displayName} (${identity})` : identity
   return ok(
-    `BALANCES\nADDRESS: ${w.address}` +
-    `\nETH (Sepolia): ${parseFloat(sepoliaBalance.eth).toFixed(6)} ETH` +
-    ogLine,
+    `BALANCES\n` +
+    `IDENTITY:  ${label}\n` +
+    `\n━━ SEND FUNDS HERE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `  ADDRESS:       ${w.address}\n` +
+    `  ETH (Sepolia): ${eth} ETH  ← gas + escrow payments\n` +
+    (og !== null ? `  OG  (0G):      ${og} OG   ← data storage\n` : '') +
+    `\n  Faucets:\n` +
+    `     Sepolia ETH → https://sepoliafaucet.com\n` +
+    `     0G OG       → https://hub.0g.ai/faucet\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
   )
 }
 
@@ -420,7 +529,7 @@ async function handleMyListings(backendUrl: string) {
   const listings = (data as Array<{ listingId: string; title: string; priceUSDC: number; category: string; active: boolean }>).filter(l => l.active)
   if (!listings.length) return ok('NO_ACTIVE_LISTINGS')
   return ok(`YOUR LISTINGS (${listings.length})\n` + listings.map(l =>
-    `  ${l.listingId.slice(0, 8)}…  ${l.title.slice(0, 55).padEnd(55)}  ${l.priceUSDC} USDC  [${l.category}]`).join('\n'))
+    `  ${l.listingId}  ${l.title.slice(0, 55).padEnd(55)}  ${l.priceUSDC} USDC  [${l.category}]`).join('\n'))
 }
 
 async function handleAcceptDeal(args: { deal_id: string }, backendUrl: string) {
@@ -488,7 +597,7 @@ async function handleDiscover(args: { category?: string; search?: string; max_pr
   const listings = data as Array<{ listingId: string; title: string; priceUSDC: number; category: string }>
   if (!listings.length) return ok('NO_LISTINGS')
   return ok(`LISTINGS (${listings.length})\n` + listings.map(l =>
-    `  ${l.listingId.slice(0, 8)}…  ${l.title.slice(0, 60).padEnd(60)}  ${l.priceUSDC} USDC  [${l.category}]`).join('\n'))
+    `  ${l.listingId}  ${l.title.slice(0, 60).padEnd(60)}  ${l.priceUSDC} USDC  [${l.category}]`).join('\n'))
 }
 
 async function handleNegotiate(args: { listing_id: string; proposed_price_usdc: number; message?: string }, backendUrl: string) {
@@ -512,7 +621,11 @@ async function handleCreateDeal(args: { offer_id: string }, backendUrl: string) 
   const s = requireSession()
   const { ok: dealOk, data } = await api('POST', '/api/deals', { offerId: args.offer_id }, s.apiKey, backendUrl) as { ok: boolean; data: { dealId?: string; error?: string } }
   if (!dealOk || !data.dealId) throw new Error(`Deal creation failed: ${data.error}`)
-  return ok(`DEAL_CREATED\nDEAL_ID: ${data.dealId}\nOFFER_ID: ${args.offer_id}\n\nNext: phantom_lock_funds deal_id=${data.dealId}`)
+  return ok(
+    `DEAL_CREATED\nDEAL_ID:   ${data.dealId}\nOFFER_ID:  ${args.offer_id}\n\n` +
+    `${dealEnsBlock(data.dealId)}\n\n` +
+    `Next: phantom_lock_funds deal_id=${data.dealId}`,
+  )
 }
 
 async function handleLockFunds(args: { deal_id: string }, backendUrl: string) {
@@ -539,14 +652,24 @@ async function handleMyDeals(backendUrl: string) {
   if (!fetchOk) throw new Error(`Failed: ${JSON.stringify(data)}`)
   const deals = (Array.isArray(data) ? data : (data as { deals?: unknown[] }).deals ?? []) as Array<{ dealId: string; status: string; priceUSDC?: string }>
   if (!deals.length) return ok('NO_ACTIVE_DEALS')
-  return ok(`YOUR DEALS (${deals.length})\n` + deals.map(d => `  ${d.dealId.slice(0, 8)}…  ${d.status}  ${d.priceUSDC ?? '?'} USDC`).join('\n'))
+  const lines = deals.map(d =>
+    `  ${d.dealId}  ${d.status}  ${d.priceUSDC ?? '?'} USDC\n` +
+    `    └─ buyer-${d.dealId}.${ENS_PARENT}\n` +
+    `       seller-${d.dealId}.${ENS_PARENT}\n` +
+    `       deal-${d.dealId}.${ENS_PARENT}`
+  )
+  return ok(`YOUR DEALS (${deals.length})\n` + lines.join('\n'))
 }
 
 async function handleDealStatus(args: { deal_id: string }, backendUrl: string) {
   const s = requireSession()
   const { ok: fetchOk, data } = await api('GET', `/api/deals/${args.deal_id}`, undefined, s.apiKey, backendUrl) as { ok: boolean; data: Record<string, unknown> }
   if (!fetchOk) throw new Error(`Deal not found: ${JSON.stringify(data)}`)
-  return ok('DEAL_STATUS\n' + Object.entries(data).map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`).join('\n'))
+  const fields = Object.entries(data).map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`).join('\n')
+  return ok(
+    `DEAL_STATUS\n${fields}\n\n` +
+    `${dealEnsBlock(args.deal_id)}`,
+  )
 }
 
 // ── AXL handlers ─────────────────────────────────────────────────────────────
@@ -636,7 +759,7 @@ async function handleMyNegotiations(backendUrl: string) {
       n.status === 'COUNTERED' && n.role === 'buyer'  ? ' ← COUNTER or ACCEPT needed' :
       n.status === 'ACCEPTED'                         ? ' ← CREATE DEAL now' : ''
     return (
-      `  ${n.negotiationId.slice(0, 8)}…  [${n.status.padEnd(9)}]  ` +
+      `  ${n.negotiationId}  [${n.status.padEnd(9)}]  ` +
       `listed ${n.listedPrice} → current ${n.currentPrice} USDC  ` +
       `${n.rounds.length} round(s)  [${n.role}]${action}`
     )
@@ -683,36 +806,154 @@ async function handleGetNegotiation(args: { negotiation_id: string }, backendUrl
 }
 
 async function handleInit(
-  args: { role?: 'buyer' | 'seller' },
+  args: { role?: 'buyer' | 'seller'; identity?: string; display_name?: string },
   backendUrl: string,
   webhookHost: string,
   webhookPort: number,
 ) {
+  setCurrentIdentity(args.identity ?? 'default')
+  const identity = getCurrentIdentity()
   const existing = getSession()
   if (existing) {
-    const w = loadOrCreateWallet()
-    const axlPubkey = walletToAxlPubkey(w.address)
+    const w          = loadOrCreateWallet()
+    const axlPubkey  = walletToAxlPubkey(w.address)
+    const label      = existing.displayName ? `${existing.displayName} (${identity})` : identity
+    const balances   = await fetchBalances(w.address)
     return ok(
-      `ALREADY_INITIALIZED\nAGENT_ID: ${existing.agentId}\nROLE: ${existing.role}\n` +
-      `WALLET: ${w.address}\nAXL_PUBKEY: ${axlPubkey}\n\n` +
-      `Session active from ~/.phantom/session.json\nNo action taken.`,
+      `ALREADY_INITIALIZED\n` +
+      `IDENTITY:  ${label}\n` +
+      `AGENT_ID:  ${existing.agentId}\n` +
+      `ROLE:      ${existing.role}\n` +
+      `AXL_KEY:   ${axlPubkey}\n` +
+      `\n━━ WALLET (Sepolia) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `  ADDRESS:  ${w.address}\n` +
+      `  ENS:      ${existing.role}-<dealId>.${ENS_PARENT}  (per-deal ephemeral)\n` +
+      `${balances}\n` +
+      `\n  ⚡ FUND THIS ADDRESS to participate in the marketplace:\n` +
+      `     Sepolia ETH → https://sepoliafaucet.com\n` +
+      `     0G OG       → https://hub.0g.ai/faucet\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `Use phantom_switch_identity to change persona.`,
     )
   }
   if (!args.role) {
-    return ok('ROLE_REQUIRED\nSpecify role: phantom_init role="buyer" or phantom_init role="seller"')
+    return ok(`ROLE_REQUIRED\nIDENTITY: ${identity}\nSpecify role: phantom_init role="buyer" or phantom_init role="seller"`)
   }
-  return handleRegister({ role: args.role }, backendUrl, webhookHost, webhookPort)
+  return handleRegister({ role: args.role, displayName: args.display_name }, backendUrl, webhookHost, webhookPort)
+}
+
+async function handleWatchNegotiation(
+  args: { negotiation_id: string; timeout_seconds?: number },
+  backendUrl: string,
+) {
+  const s         = requireSession()
+  const timeoutMs = Math.min(args.timeout_seconds ?? 90, 300) * 1000
+  const pollMs    = 4000
+  const start     = Date.now()
+
+  type NegData = Record<string, unknown> & {
+    rounds?: Array<{ by: string; price: number; message: string; at: number }>
+    status?: string; currentPrice?: number; listedPrice?: number; role?: string; listingId?: string
+  }
+
+  const fetchNeg = async (): Promise<NegData | null> => {
+    const { ok, data } = await api(
+      'GET', `/api/negotiations/${args.negotiation_id}`,
+      undefined, s.apiKey, backendUrl,
+    ) as { ok: boolean; data: NegData }
+    return ok ? data : null
+  }
+
+  const formatRounds = (rounds: NegData['rounds'] = []) =>
+    rounds.map((r, i) =>
+      `  [${i + 1}] ${r.by.toUpperCase().padEnd(6)}  ${r.price} USDC  "${r.message}"  ${new Date(r.at).toISOString().slice(11, 19)}`
+    ).join('\n')
+
+  const actionHint = (status?: string, role?: string) =>
+    status === 'PENDING'   && role === 'seller' ? '\nNEXT_ACTION: phantom_counter_negotiation OR phantom_accept_negotiation' :
+    status === 'COUNTERED' && role === 'buyer'  ? '\nNEXT_ACTION: phantom_counter_negotiation OR phantom_accept_negotiation' :
+    status === 'ACCEPTED'                       ? '\nNEXT_ACTION: phantom_create_deal (check phantom_notifications for offerId)' :
+    status === 'REJECTED'                       ? '\nNEXT_ACTION: Rejected — use phantom_negotiate to open a new negotiation' : ''
+
+  // Capture baseline on first poll
+  let lastStatus     = ''
+  let lastRoundCount = -1
+
+  while (Date.now() - start < timeoutMs) {
+    const data = await fetchNeg()
+    if (!data) { await new Promise(r => setTimeout(r, pollMs)); continue }
+
+    const status     = (data.status as string) ?? ''
+    const roundCount = (data.rounds ?? []).length
+
+    if (lastRoundCount === -1) {
+      // First poll — record baseline, don't return yet
+      lastStatus     = status
+      lastRoundCount = roundCount
+      await new Promise(r => setTimeout(r, pollMs))
+      continue
+    }
+
+    if (status !== lastStatus || roundCount !== lastRoundCount) {
+      const changeDesc = status !== lastStatus
+        ? `STATUS CHANGED: ${lastStatus} → ${status}`
+        : `NEW ROUND (${roundCount} total, was ${lastRoundCount})`
+      return ok(
+        `NEGOTIATION_UPDATE ⚡\n${changeDesc}\n\n` +
+        `NEGOTIATION_ID: ${args.negotiation_id}\n` +
+        `STATUS:         ${status}   ROLE: ${data.role}\n` +
+        `LISTED_PRICE:   ${data.listedPrice} USDC   CURRENT_PRICE: ${data.currentPrice} USDC\n` +
+        `LISTING_ID:     ${data.listingId}\n` +
+        `ROUNDS:\n${formatRounds(data.rounds) || '  (no rounds yet)'}` +
+        actionHint(status, data.role as string),
+      )
+    }
+
+    await new Promise(r => setTimeout(r, pollMs))
+  }
+
+  // Timeout — return current state so agent can decide whether to call again
+  const data = await fetchNeg()
+  if (!data) return ok(`WATCH_TIMEOUT\nNEGOTIATION_ID: ${args.negotiation_id}\nCould not reach backend.`)
+  return ok(
+    `WATCH_TIMEOUT\nNEGOTIATION_ID: ${args.negotiation_id}\n` +
+    `STATUS: ${data.status}   CURRENT_PRICE: ${data.currentPrice} USDC   ROLE: ${data.role}\n` +
+    `No change detected in ${Math.min(args.timeout_seconds ?? 90, 300)}s.\n` +
+    `Call phantom_watch_negotiation again to keep watching.` +
+    actionHint(data.status as string, data.role as string),
+  )
+}
+
+async function handleSwitchIdentity(args: { identity: string }) {
+  setCurrentIdentity(args.identity)
+  const s = getSession()
+  const w = loadOrCreateWallet()
+  const balances = await fetchBalances(w.address)
+  if (!s) {
+    return ok(
+      `IDENTITY_SWITCHED\nIDENTITY: ${args.identity}\nSTATUS: No session for this identity.\n` +
+      `ADDRESS: ${w.address}\n${balances}\n` +
+      `Call phantom_init role=<buyer|seller> identity="${args.identity}" to register.`,
+    )
+  }
+  const label = s.displayName ? `${s.displayName} (${args.identity})` : args.identity
+  return ok(
+    `IDENTITY_SWITCHED\nIDENTITY:  ${label}\nAGENT_ID:  ${s.agentId}\nROLE:      ${s.role}\n` +
+    `ADDRESS:   ${w.address}\n${balances}\n${ensLine(s.role)}\n\n` +
+    `All tools now acting as ${label}.`,
+  )
 }
 
 function handleAxlInfo() {
-  const w = loadOrCreateWallet()
+  const w        = loadOrCreateWallet()
   const axlPubkey = walletToAxlPubkey(w.address)
-  const s = getSession()
+  const s        = getSession()
+  const identity = getCurrentIdentity()
   const sessionLine = s
-    ? `AGENT_ID: ${s.agentId}\nROLE: ${s.role}\nBACKEND: ${s.backendUrl}`
+    ? `AGENT_ID: ${s.agentId}\nROLE: ${s.role}\n${ensLine(s.role)}\nBACKEND: ${s.backendUrl}`
     : 'STATUS: Not registered — call phantom_init first.'
   return ok(
-    `AXL IDENTITY\nWALLET: ${w.address}\nAXL_PUBKEY: ${axlPubkey}\n` +
+    `AXL IDENTITY\nIDENTITY: ${identity}\nWALLET: ${w.address}\nAXL_PUBKEY: ${axlPubkey}\n` +
     `EXPLORER: https://sepolia.etherscan.io/address/${w.address}\n${sessionLine}`,
   )
 }
@@ -845,7 +1086,8 @@ export async function startMcpServer(autoRole?: 'buyer' | 'seller'): Promise<voi
         case 'phantom_lock_funds':     return await handleLockFunds(args as { deal_id: string }, BACKEND_URL)
         case 'phantom_my_deals':       return await handleMyDeals(BACKEND_URL)
         case 'phantom_deal_status':    return await handleDealStatus(args as { deal_id: string }, BACKEND_URL)
-        case 'phantom_init':           return await handleInit(args as { role?: 'buyer' | 'seller' }, BACKEND_URL, WEBHOOK_HOST, WEBHOOK_PORT)
+        case 'phantom_init':           return await handleInit(args as { role?: 'buyer' | 'seller'; identity?: string; display_name?: string }, BACKEND_URL, WEBHOOK_HOST, WEBHOOK_PORT)
+        case 'phantom_switch_identity':return await handleSwitchIdentity(args as { identity: string })
         case 'phantom_axl_info':       return handleAxlInfo()
         case 'phantom_send_axl_message': return await handleSendAxlMessage(args as Parameters<typeof handleSendAxlMessage>[0], BACKEND_URL)
         case 'phantom_read_axl_messages': return await handleReadAxlMessages(BACKEND_URL)
@@ -853,6 +1095,7 @@ export async function startMcpServer(autoRole?: 'buyer' | 'seller'): Promise<voi
         case 'phantom_reply_to_inquiry':  return await handleReplyToInquiry(args as Parameters<typeof handleReplyToInquiry>[0], BACKEND_URL)
         case 'phantom_my_negotiations':   return await handleMyNegotiations(BACKEND_URL)
         case 'phantom_get_negotiation':   return await handleGetNegotiation(args as { negotiation_id: string }, BACKEND_URL)
+        case 'phantom_watch_negotiation': return await handleWatchNegotiation(args as { negotiation_id: string; timeout_seconds?: number }, BACKEND_URL)
         default:                       return err(`Unknown tool: ${name}`)
       }
     } catch (e: unknown) {

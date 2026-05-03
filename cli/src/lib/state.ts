@@ -14,28 +14,48 @@ export interface Session {
   role:         'buyer' | 'seller'
   webhookPort:  number
   backendUrl:   string
+  displayName?: string
 }
 
 let _session: Session | null = null
+let _currentIdentity = 'default'
+
+export function getCurrentIdentity(): string {
+  return _currentIdentity
+}
+
+export function setCurrentIdentity(id: string): void {
+  if (id !== _currentIdentity) {
+    _session = null           // force reload from identity-specific file
+    _currentIdentity = id
+  }
+}
+
+function sessionFile(): string {
+  return _currentIdentity === 'default'
+    ? SESSION_FILE
+    : join(PHANTOM_DIR, `${_currentIdentity}-session.json`)
+}
 
 export function loadSession(): Session | null {
   if (_session) return _session
-  if (!existsSync(SESSION_FILE)) return null
+  const file = sessionFile()
+  if (!existsSync(file)) return null
   try {
-    _session = JSON.parse(readFileSync(SESSION_FILE, 'utf8')) as Session
+    _session = JSON.parse(readFileSync(file, 'utf8')) as Session
     return _session
   } catch { return null }
 }
 
 export function saveSession(s: Session): void {
   mkdirSync(PHANTOM_DIR, { recursive: true })
-  writeFileSync(SESSION_FILE, JSON.stringify(s, null, 2), { mode: 0o600 })
+  writeFileSync(sessionFile(), JSON.stringify(s, null, 2), { mode: 0o600 })
   _session = s
 }
 
 export function clearSession(): void {
   _session = null
-  try { if (existsSync(SESSION_FILE)) unlinkSync(SESSION_FILE) } catch { /* ok */ }
+  try { if (existsSync(sessionFile())) unlinkSync(sessionFile()) } catch { /* ok */ }
 }
 
 export function getSession(): Session | null {
