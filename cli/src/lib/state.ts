@@ -62,32 +62,56 @@ export function getSession(): Session | null {
   return _session ?? loadSession()
 }
 
-// ── Payload buffers ───────────────────────────────────────────────────────────
+// ── Payload buffers (in-memory + disk-persisted under ~/.phantom/payloads/) ───
+
+const PAYLOADS_DIR = join(PHANTOM_DIR, 'payloads')
+
+function payloadPath(id: string): string {
+  return join(PAYLOADS_DIR, `${id}.bin`)
+}
+
+function writeToDisk(id: string, buf: Buffer): void {
+  mkdirSync(PAYLOADS_DIR, { recursive: true })
+  writeFileSync(payloadPath(id), buf, { mode: 0o600 })
+}
+
+function readFromDisk(id: string): Buffer | undefined {
+  const p = payloadPath(id)
+  if (!existsSync(p)) return undefined
+  try { return readFileSync(p) } catch { return undefined }
+}
+
+function deleteFromDisk(id: string): void {
+  try { if (existsSync(payloadPath(id))) unlinkSync(payloadPath(id)) } catch { /* ok */ }
+}
 
 const _offerPayloads = new Map<string, Buffer>()
 const _dealPayloads  = new Map<string, Buffer>()
 
 export function storeOfferPayload(offerId: string, buf: Buffer): void {
   _offerPayloads.set(offerId, buf)
+  writeToDisk(offerId, buf)
 }
 
 export function getOfferPayload(offerId: string): Buffer | undefined {
-  return _offerPayloads.get(offerId)
+  return _offerPayloads.get(offerId) ?? readFromDisk(offerId)
 }
 
 export function mapOfferPayloadToDeal(offerId: string, dealId: string): boolean {
-  const buf = _offerPayloads.get(offerId)
+  const buf = _offerPayloads.get(offerId) ?? readFromDisk(offerId)
   if (!buf) return false
   _dealPayloads.set(dealId, buf)
+  writeToDisk(dealId, buf)
   return true
 }
 
 export function getDealPayload(dealId: string): Buffer | undefined {
-  return _dealPayloads.get(dealId)
+  return _dealPayloads.get(dealId) ?? readFromDisk(dealId)
 }
 
 export function deleteDealPayload(dealId: string): void {
   _dealPayloads.delete(dealId)
+  deleteFromDisk(dealId)
 }
 
 // ── Notification queue ────────────────────────────────────────────────────────
