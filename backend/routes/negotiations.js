@@ -67,7 +67,11 @@ negotiationsRouter.post('/', authenticate, async (req, res) => {
 negotiationsRouter.post('/:id/counter', authenticate, async (req, res) => {
   const neg = negotiations.get(req.params.id);
   if (!neg) return res.status(404).json({ error: 'Negotiation not found' });
-  if (neg.sellerAgentId !== req.agentId) return res.status(403).json({ error: 'Not your negotiation' });
+  const myAddr = req.agent?.ephemeralAddress?.toLowerCase();
+  const sellerAgent = agents.get(neg.sellerAgentId);
+  const isSeller = neg.sellerAgentId === req.agentId ||
+    sellerAgent?.ephemeralAddress?.toLowerCase() === myAddr;
+  if (!isSeller) return res.status(403).json({ error: 'Not your negotiation' });
   if (!['PENDING', 'COUNTERED'].includes(neg.status)) {
     return res.status(400).json({ error: `Cannot counter a ${neg.status} negotiation` });
   }
@@ -96,8 +100,11 @@ negotiationsRouter.post('/:id/accept', authenticate, async (req, res) => {
   const neg = negotiations.get(req.params.id);
   if (!neg) return res.status(404).json({ error: 'Negotiation not found' });
 
-  const isBuyer  = neg.buyerAgentId  === req.agentId;
-  const isSeller = neg.sellerAgentId === req.agentId;
+  const myAddr = req.agent?.ephemeralAddress?.toLowerCase();
+  const buyerAgent  = agents.get(neg.buyerAgentId);
+  const sellerAgent = agents.get(neg.sellerAgentId);
+  const isBuyer  = neg.buyerAgentId  === req.agentId || buyerAgent?.ephemeralAddress?.toLowerCase()  === myAddr;
+  const isSeller = neg.sellerAgentId === req.agentId || sellerAgent?.ephemeralAddress?.toLowerCase() === myAddr;
   if (!isBuyer && !isSeller) return res.status(403).json({ error: 'Not a party to this negotiation' });
   if (!['PENDING', 'COUNTERED'].includes(neg.status)) {
     return res.status(400).json({ error: `Cannot accept a ${neg.status} negotiation` });
@@ -128,8 +135,11 @@ negotiationsRouter.post('/:id/reject', authenticate, async (req, res) => {
   const neg = negotiations.get(req.params.id);
   if (!neg) return res.status(404).json({ error: 'Negotiation not found' });
 
-  const isBuyer  = neg.buyerAgentId  === req.agentId;
-  const isSeller = neg.sellerAgentId === req.agentId;
+  const myAddr = req.agent?.ephemeralAddress?.toLowerCase();
+  const buyerAgent  = agents.get(neg.buyerAgentId);
+  const sellerAgent = agents.get(neg.sellerAgentId);
+  const isBuyer  = neg.buyerAgentId  === req.agentId || buyerAgent?.ephemeralAddress?.toLowerCase()  === myAddr;
+  const isSeller = neg.sellerAgentId === req.agentId || sellerAgent?.ephemeralAddress?.toLowerCase() === myAddr;
   if (!isBuyer && !isSeller) return res.status(403).json({ error: 'Not a party to this negotiation' });
 
   neg.status = 'REJECTED';
