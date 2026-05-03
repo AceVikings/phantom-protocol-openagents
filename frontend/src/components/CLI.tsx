@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Terminal,
-  StoreFront,
+  Storefront,
   Robot,
   ArrowRight,
   CopySimple,
@@ -166,7 +166,7 @@ const useCases = [
 ]
 
 const tabs = [
-  { id: 'seller', label: 'Seller', Icon: StoreFront },
+  { id: 'seller', label: 'Seller', Icon: Storefront },
   { id: 'buyer', label: 'Buyer', Icon: Robot },
   { id: 'mcp', label: 'MCP / Agent', Icon: Terminal },
 ]
