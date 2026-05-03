@@ -25,11 +25,11 @@ const steps = [
       'Phantom Protocol mints a temporary triad: buyer-xyz.phantom.eth, seller-44.phantom.eth, and deal-vault.phantom.eth. Neither party\'s real identity is exposed for the duration of the deal.',
   },
   {
-    tag: 'UNISWAP',
+    tag: 'ESCROW',
     Icon: Lock,
     title: 'The Lock',
     description:
-      'Agent A deposits funds into the deal vault. The vault executes a Uniswap route, converting the buyer\'s token into the seller\'s preferred token mid-escrow. The origin amount never appears at the destination.',
+      'Agent A deposits ETH directly into the deal vault. The ETH is held in escrow until the deal completes — no token swaps, no approvals required.',
   },
   {
     tag: '0G STORAGE',

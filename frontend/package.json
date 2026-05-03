@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
+    "@privy-io/react-auth": "^2.25.0",
     "@tailwindcss/vite": "^4.2.4",
+    "ethers": "^6.16.0",
     "framer-motion": "^12.38.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",

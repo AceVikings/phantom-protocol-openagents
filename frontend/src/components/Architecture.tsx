@@ -88,43 +88,43 @@ const WhisperBoxAnim = memo(function WhisperBoxAnim() {
   )
 })
 
-// ─── Micro-animation: Uniswap token swap arrow ───────────────────────────────
-const ObfuscatedPayoutAnim = memo(function ObfuscatedPayoutAnim() {
-  const [flipped, setFlipped] = useState(false)
+// ─── Micro-animation: ETH lock in vault ────────────────────────────────────
+const EthEscrowAnim = memo(function EthEscrowAnim() {
+  const [locked, setLocked] = useState(false)
 
   useEffect(() => {
-    const t = setInterval(() => setFlipped((p) => !p), 2000)
+    const t = setInterval(() => setLocked((p) => !p), 2000)
     return () => clearInterval(t)
   }, [])
 
   return (
     <div className="mt-5 flex items-center justify-between">
       <motion.div
-        animate={{ opacity: flipped ? 0.4 : 1 }}
+        animate={{ opacity: locked ? 0.4 : 1 }}
         transition={{ duration: 0.5 }}
         className="flex flex-col items-center gap-1"
       >
-        <span className="text-[10px] font-mono text-zinc-400">USDC</span>
+        <span className="text-[10px] font-mono text-zinc-400">BUYER</span>
         <div className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center">
-          <span className="text-[10px] font-bold text-zinc-300">$</span>
+          <span className="text-[10px] font-bold text-zinc-300">Ξ</span>
         </div>
       </motion.div>
 
       <motion.div
-        animate={{ rotate: flipped ? 180 : 0 }}
+        animate={{ rotate: locked ? 0 : 180 }}
         transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
       >
         <ArrowsLeftRight size={16} className="text-emerald-400" />
       </motion.div>
 
       <motion.div
-        animate={{ opacity: flipped ? 1 : 0.4 }}
+        animate={{ opacity: locked ? 1 : 0.4 }}
         transition={{ duration: 0.5 }}
         className="flex flex-col items-center gap-1"
       >
-        <span className="text-[10px] font-mono text-zinc-400">WETH</span>
+        <span className="text-[10px] font-mono text-zinc-400">VAULT</span>
         <div className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center">
-          <span className="text-[10px] font-bold text-zinc-300">Ξ</span>
+          <span className="text-[10px] font-bold text-emerald-400">{locked ? '🔒' : '🔓'}</span>
         </div>
       </motion.div>
     </div>
@@ -200,14 +200,14 @@ const cards = [
     Anim: WhisperBoxAnim,
   },
   {
-    id: 'uni',
-    badge: 'UNISWAP',
+    id: 'escrow',
+    badge: 'ESCROW',
     colClass: 'col-span-6 md:col-span-2',
     Icon: ArrowsLeftRight,
-    title: 'Obfuscated Payout',
+    title: 'ETH Escrow',
     description:
-      'The vault routes buyer funds through Uniswap, converting tokens mid-escrow. Chain-analysis tools never find a matching receipt for the seller.',
-    Anim: ObfuscatedPayoutAnim,
+      'Buyer deposits ETH directly into the deal vault. Funds are held in escrow until the deal completes — no token swaps, no approvals required.',
+    Anim: EthEscrowAnim,
   },
   {
     id: 'keeper',
