@@ -94,7 +94,6 @@ jobs:
             INTERNAL_SECRET=${{ secrets.INTERNAL_SECRET }}
             ZERO_G_RPC_URL=${{ secrets.ZERO_G_RPC_URL }}
             ZERO_G_STORAGE_URL=${{ secrets.ZERO_G_STORAGE_URL }}
-            ZERO_G_PROVIDER_ADDRESS=${{ secrets.ZERO_G_PROVIDER_ADDRESS }}
             ETH_RPC_URL=${{ secrets.ETH_RPC_URL }}
             ENS_PARENT_NAME=${{ secrets.ENS_PARENT_NAME }}
             KH_API_KEY=${{ secrets.KH_API_KEY }}

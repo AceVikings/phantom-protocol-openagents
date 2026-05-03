@@ -392,7 +392,6 @@ phantom mcp config               # Print Claude Desktop JSON snippet
 | `ENS_NAME_WRAPPER` | ✅ | ENS NameWrapper contract on Sepolia (`0x0635513f179D50A207757E05759CbD106d7dFcE8`) |
 | `ZERO_G_RPC_URL` | ✅ | 0G Galileo RPC (`https://evmrpc-testnet.0g.ai`) |
 | `ZERO_G_STORAGE_URL` | ✅ | 0G Storage indexer URL |
-| `ZERO_G_PROVIDER_ADDRESS` | optional | 0G Compute provider address |
 | `COORDINATOR_AXL_API` | optional | AXL node base URL (default: `http://127.0.0.1:9002`) |
 | `KH_API_KEY` | optional | KeeperHub API key for arbiter + janitor workflows |
 | `INTERNAL_SECRET` | optional | Shared secret for KeeperHub → backend internal webhooks |
