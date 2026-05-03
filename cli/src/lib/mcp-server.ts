@@ -107,12 +107,12 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        topic:       { type: 'string' },
-        content:     { type: 'string' },
-        price_usdc:  { type: 'number' },
-        category:    { type: 'string' },
+        topic:      { type: 'string' },
+        content:    { type: 'string' },
+        price_eth:  { type: 'number', description: 'Price in Sepolia ETH (NOT USDC — the vault locks ETH).' },
+        category:   { type: 'string' },
       },
-      required: ['topic', 'content', 'price_usdc'],
+      required: ['topic', 'content', 'price_eth'],
     },
   },
   {
@@ -175,9 +175,9 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        category:       { type: 'string' },
-        search:         { type: 'string' },
-        max_price_usdc: { type: 'number' },
+        category:      { type: 'string' },
+        search:        { type: 'string' },
+        max_price_eth: { type: 'number', description: 'Max price in Sepolia ETH.' },
       },
     },
   },
@@ -187,11 +187,11 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        listing_id:          { type: 'string' },
-        proposed_price_usdc: { type: 'number' },
-        message:             { type: 'string' },
+        listing_id:         { type: 'string' },
+        proposed_price_eth: { type: 'number', description: 'Proposed price in Sepolia ETH (NOT USDC).' },
+        message:            { type: 'string' },
       },
-      required: ['listing_id', 'proposed_price_usdc'],
+      required: ['listing_id', 'proposed_price_eth'],
     },
   },
   {
@@ -491,7 +491,7 @@ function handleNotifications() {
 }
 
 async function handleListReport(
-  args: { topic: string; content: string; price_usdc: number; category?: string },
+  args: { topic: string; content: string; price_eth: number; category?: string },
   backendUrl: string,
 ) {
   const s        = requireSession()
@@ -501,8 +501,8 @@ async function handleListReport(
 
   const { ok: offerOk, data: offerData } = await api(
     'POST', '/api/offers',
-    { description: args.content.slice(0, 200), payloadType: category, priceUSDC: args.price_usdc,
-      tokenOut: 'USDC', expectedSizeBytes: buf.length, expectedSha256: sha256 },
+    { description: args.content.slice(0, 200), payloadType: category, priceUSDC: args.price_eth,
+      tokenOut: 'ETH', expectedSizeBytes: buf.length, expectedSha256: sha256 },
     s.apiKey, backendUrl,
   ) as { ok: boolean; data: { offerId?: string; error?: string } }
 
@@ -513,13 +513,13 @@ async function handleListReport(
     'POST', '/api/listings',
     { title: `${args.topic.slice(0, 80)} — Research Report`, description: args.content.slice(0, 200),
       category, tags: args.topic.toLowerCase().split(/\s+/).slice(0, 5),
-      priceUSDC: args.price_usdc, offerId: offerData.offerId },
+      priceUSDC: args.price_eth, offerId: offerData.offerId },
     s.apiKey, backendUrl,
   ) as { ok: boolean; data: { listingId?: string; error?: string } }
 
   if (!listOk || !listData.listingId) throw new Error(`Listing creation failed: ${listData.error}`)
 
-  return ok(`LISTED\nLISTING_ID: ${listData.listingId}\nOFFER_ID: ${offerData.offerId}\nTOPIC: ${args.topic}\nPRICE: ${args.price_usdc} USDC`)
+  return ok(`LISTED\nLISTING_ID: ${listData.listingId}\nOFFER_ID: ${offerData.offerId}\nTOPIC: ${args.topic}\nPRICE: ${args.price_eth} ETH (Sepolia)`)
 }
 
 async function handleMyListings(backendUrl: string) {
@@ -529,7 +529,7 @@ async function handleMyListings(backendUrl: string) {
   const listings = (data as Array<{ listingId: string; title: string; priceUSDC: number; category: string; active: boolean }>).filter(l => l.active)
   if (!listings.length) return ok('NO_ACTIVE_LISTINGS')
   return ok(`YOUR LISTINGS (${listings.length})\n` + listings.map(l =>
-    `  ${l.listingId}  ${l.title.slice(0, 55).padEnd(55)}  ${l.priceUSDC} USDC  [${l.category}]`).join('\n'))
+    `  ${l.listingId}  ${l.title.slice(0, 55).padEnd(55)}  ${l.priceUSDC} ETH  [${l.category}]`).join('\n'))
 }
 
 async function handleAcceptDeal(args: { deal_id: string }, backendUrl: string) {
@@ -569,14 +569,14 @@ async function handleCounterNegotiation(args: { negotiation_id: string; counter_
   const { ok: cOk, data } = await api('POST', `/api/negotiations/${args.negotiation_id}/counter`,
     { counterPrice: args.counter_price, message: args.message ?? '' }, s.apiKey, backendUrl) as { ok: boolean; data: { rounds?: number; error?: string } }
   if (!cOk) throw new Error(`Counter failed: ${data.error}`)
-  return ok(`COUNTER_SENT\nNEGOTIATION_ID: ${args.negotiation_id}\nCOUNTER_PRICE: ${args.counter_price} USDC`)
+  return ok(`COUNTER_SENT\nNEGOTIATION_ID: ${args.negotiation_id}\nCOUNTER_PRICE: ${args.counter_price} ETH (Sepolia)`)
 }
 
 async function handleAcceptNegotiation(args: { negotiation_id: string }, backendUrl: string) {
   const s = requireSession()
   const { ok: aOk, data } = await api('POST', `/api/negotiations/${args.negotiation_id}/accept`, {}, s.apiKey, backendUrl) as { ok: boolean; data: { offerId?: string; finalPrice?: number; error?: string } }
   if (!aOk) throw new Error(`Accept failed: ${data.error}`)
-  return ok(`NEGOTIATION_ACCEPTED\nNEGOTIATION_ID: ${args.negotiation_id}\nFINAL_PRICE: ${data.finalPrice} USDC\nOFFER_ID: ${data.offerId ?? 'n/a'}`)
+  return ok(`NEGOTIATION_ACCEPTED\nNEGOTIATION_ID: ${args.negotiation_id}\nFINAL_PRICE: ${data.finalPrice} ETH (Sepolia)\nOFFER_ID: ${data.offerId ?? 'n/a'}`)
 }
 
 async function handleRejectNegotiation(args: { negotiation_id: string }, backendUrl: string) {
@@ -586,21 +586,21 @@ async function handleRejectNegotiation(args: { negotiation_id: string }, backend
   return ok(`NEGOTIATION_REJECTED\nNEGOTIATION_ID: ${args.negotiation_id}`)
 }
 
-async function handleDiscover(args: { category?: string; search?: string; max_price_usdc?: number }, backendUrl: string) {
+async function handleDiscover(args: { category?: string; search?: string; max_price_eth?: number }, backendUrl: string) {
   let path = '/api/listings?'
-  if (args.category)       path += `category=${encodeURIComponent(args.category)}&`
-  if (args.search)         path += `search=${encodeURIComponent(args.search)}&`
-  if (args.max_price_usdc) path += `maxPrice=${args.max_price_usdc}&`
+  if (args.category)      path += `category=${encodeURIComponent(args.category)}&`
+  if (args.search)        path += `search=${encodeURIComponent(args.search)}&`
+  if (args.max_price_eth) path += `maxPrice=${args.max_price_eth}&`
 
   const { ok: fetchOk, data } = await api('GET', path.replace(/&$/, ''), undefined, undefined, backendUrl)
   if (!fetchOk) throw new Error(`Discover failed: ${JSON.stringify(data)}`)
   const listings = data as Array<{ listingId: string; title: string; priceUSDC: number; category: string }>
   if (!listings.length) return ok('NO_LISTINGS')
   return ok(`LISTINGS (${listings.length})\n` + listings.map(l =>
-    `  ${l.listingId}  ${l.title.slice(0, 60).padEnd(60)}  ${l.priceUSDC} USDC  [${l.category}]`).join('\n'))
+    `  ${l.listingId}  ${l.title.slice(0, 60).padEnd(60)}  ${l.priceUSDC} ETH  [${l.category}]`).join('\n'))
 }
 
-async function handleNegotiate(args: { listing_id: string; proposed_price_usdc: number; message?: string }, backendUrl: string) {
+async function handleNegotiate(args: { listing_id: string; proposed_price_eth: number; message?: string }, backendUrl: string) {
   const s = requireSession()
   let listingId = args.listing_id
   if (listingId.length < 36) {
@@ -611,10 +611,10 @@ async function handleNegotiate(args: { listing_id: string; proposed_price_usdc: 
     }
   }
   const { ok: negOk, data } = await api('POST', '/api/negotiations',
-    { listingId, proposedPrice: args.proposed_price_usdc, message: args.message ?? `Opening bid` },
+    { listingId, proposedPrice: args.proposed_price_eth, message: args.message ?? `Opening bid` },
     s.apiKey, backendUrl) as { ok: boolean; data: { negotiationId?: string; status?: string; error?: string } }
   if (!negOk || !data.negotiationId) throw new Error(`Negotiation failed: ${data.error}`)
-  return ok(`NEGOTIATION_OPENED\nNEGOTIATION_ID: ${data.negotiationId}\nLISTING_ID: ${listingId}\nPROPOSED_PRICE: ${args.proposed_price_usdc} USDC`)
+  return ok(`NEGOTIATION_OPENED\nNEGOTIATION_ID: ${data.negotiationId}\nLISTING_ID: ${listingId}\nPROPOSED_PRICE: ${args.proposed_price_eth} ETH (Sepolia)`)
 }
 
 async function handleCreateDeal(args: { offer_id: string }, backendUrl: string) {
@@ -653,7 +653,7 @@ async function handleMyDeals(backendUrl: string) {
   const deals = (Array.isArray(data) ? data : (data as { deals?: unknown[] }).deals ?? []) as Array<{ dealId: string; status: string; priceUSDC?: string }>
   if (!deals.length) return ok('NO_ACTIVE_DEALS')
   const lines = deals.map(d =>
-    `  ${d.dealId}  ${d.status}  ${d.priceUSDC ?? '?'} USDC\n` +
+    `  ${d.dealId}  ${d.status}  ${d.priceUSDC ?? '?'} ETH\n` +
     `    └─ buyer-${d.dealId}.${ENS_PARENT}\n` +
     `       seller-${d.dealId}.${ENS_PARENT}\n` +
     `       deal-${d.dealId}.${ENS_PARENT}`
@@ -760,7 +760,7 @@ async function handleMyNegotiations(backendUrl: string) {
       n.status === 'ACCEPTED'                         ? ' ← CREATE DEAL now' : ''
     return (
       `  ${n.negotiationId}  [${n.status.padEnd(9)}]  ` +
-      `listed ${n.listedPrice} → current ${n.currentPrice} USDC  ` +
+      `listed ${n.listedPrice} → current ${n.currentPrice} ETH  ` + +
       `${n.rounds.length} round(s)  [${n.role}]${action}`
     )
   })
@@ -782,7 +782,7 @@ async function handleGetNegotiation(args: { negotiation_id: string }, backendUrl
   if (!fetchOk) throw new Error(`Negotiation not found: ${JSON.stringify(data)}`)
 
   const rounds = (data.rounds ?? []).map((r, i) =>
-    `  [${i + 1}] ${r.by.toUpperCase().padEnd(6)}  ${r.price} USDC  "${r.message}"  ${new Date(r.at).toISOString().slice(11, 19)}`
+    `  [${i + 1}] ${r.by.toUpperCase().padEnd(6)}  ${r.price} ETH  "${r.message}"  ${new Date(r.at).toISOString().slice(11, 19)}`
   ).join('\n')
 
   const actionHint =
@@ -798,7 +798,7 @@ async function handleGetNegotiation(args: { negotiation_id: string }, backendUrl
   return ok(
     `NEGOTIATION: ${args.negotiation_id}\n` +
     `STATUS: ${data.status}   ROLE: ${data.role}\n` +
-    `LISTED_PRICE: ${data.listedPrice} USDC   CURRENT_PRICE: ${data.currentPrice} USDC\n` +
+    `LISTED_PRICE: ${data.listedPrice} ETH   CURRENT_PRICE: ${data.currentPrice} ETH\n` +
     `LISTING_ID: ${data.listingId}\n` +
     `ROUNDS:\n${rounds || '  (no rounds yet)'}` +
     actionHint,
@@ -866,7 +866,7 @@ async function handleWatchNegotiation(
 
   const formatRounds = (rounds: NegData['rounds'] = []) =>
     rounds.map((r, i) =>
-      `  [${i + 1}] ${r.by.toUpperCase().padEnd(6)}  ${r.price} USDC  "${r.message}"  ${new Date(r.at).toISOString().slice(11, 19)}`
+      `  [${i + 1}] ${r.by.toUpperCase().padEnd(6)}  ${r.price} ETH  "${r.message}"  ${new Date(r.at).toISOString().slice(11, 19)}`
     ).join('\n')
 
   const actionHint = (status?: string, role?: string) =>
@@ -902,7 +902,7 @@ async function handleWatchNegotiation(
         `NEGOTIATION_UPDATE ⚡\n${changeDesc}\n\n` +
         `NEGOTIATION_ID: ${args.negotiation_id}\n` +
         `STATUS:         ${status}   ROLE: ${data.role}\n` +
-        `LISTED_PRICE:   ${data.listedPrice} USDC   CURRENT_PRICE: ${data.currentPrice} USDC\n` +
+        `LISTED_PRICE:   ${data.listedPrice} ETH   CURRENT_PRICE: ${data.currentPrice} ETH\n` +
         `LISTING_ID:     ${data.listingId}\n` +
         `ROUNDS:\n${formatRounds(data.rounds) || '  (no rounds yet)'}` +
         actionHint(status, data.role as string),
@@ -917,7 +917,7 @@ async function handleWatchNegotiation(
   if (!data) return ok(`WATCH_TIMEOUT\nNEGOTIATION_ID: ${args.negotiation_id}\nCould not reach backend.`)
   return ok(
     `WATCH_TIMEOUT\nNEGOTIATION_ID: ${args.negotiation_id}\n` +
-    `STATUS: ${data.status}   CURRENT_PRICE: ${data.currentPrice} USDC   ROLE: ${data.role}\n` +
+    `STATUS: ${data.status}   CURRENT_PRICE: ${data.currentPrice} ETH   ROLE: ${data.role}\n` +
     `No change detected in ${Math.min(args.timeout_seconds ?? 90, 300)}s.\n` +
     `Call phantom_watch_negotiation again to keep watching.` +
     actionHint(data.status as string, data.role as string),
@@ -1004,7 +1004,7 @@ async function handleReadAxlMessages(backendUrl: string) {
       action = `ACTION: phantom_reply_to_inquiry buyer_axl_pubkey="${from}" listing_id="${listingId}" answer="<your answer>"`
     } else if (type === 'data_inquiry_reply') {
       body   = `ANSWER: ${msg.answer}`
-      action = `ACTION: If satisfied, phantom_negotiate listing_id="${listingId}" proposed_price_usdc=<price>`
+      action = `ACTION: If satisfied, phantom_negotiate listing_id="${listingId}" proposed_price_eth=<price_in_ETH>`
     } else if (type === 'agent_message') {
       body   = `MESSAGE: ${msg.message}`
       action = dealId ? `DEAL_ID: ${dealId}` : ''
