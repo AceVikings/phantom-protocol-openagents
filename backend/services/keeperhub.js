@@ -159,27 +159,4 @@ export async function createJanitorWorkflow(dealId, expiresAt) {
   return { janitorWorkflowId };
 }
 
-/**
- * Get the latest execution status for a workflow.
- */
-export async function getWorkflowStatus(workflowId) {
-  const res = await fetch(`${KH_BASE}/workflows/${workflowId}/executions/latest`, {
-    headers: getHeaders(),
-  });
-  if (!res.ok) throw new Error(`KeeperHub status fetch failed: ${res.status}`);
-  return res.json();
-}
 
-/**
- * Delete a workflow (cleanup after deal completes).
- */
-export async function deleteWorkflow(workflowId) {
-  const res = await fetch(`${KH_BASE}/workflows/${workflowId}`, {
-    method: 'DELETE',
-    headers: getHeaders(),
-  });
-  if (!res.ok && res.status !== 404) {
-    throw new Error(`KeeperHub workflow delete failed: ${res.status}`);
-  }
-  return true;
-}

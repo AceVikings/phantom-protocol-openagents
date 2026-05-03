@@ -1,15 +1,6 @@
 const AXL_API = process.env.COORDINATOR_AXL_API || 'http://127.0.0.1:9002';
 
 /**
- * Get the coordinator's AXL node topology (public key, connected peers).
- */
-export async function getTopology() {
-  const res = await fetch(`${AXL_API}/topology`, { signal: AbortSignal.timeout(5000) });
-  if (!res.ok) throw new Error(`AXL topology request failed: ${res.status}`);
-  return res.json();
-}
-
-/**
  * Send an AXL message to a peer identified by their Ed25519 public key.
  * Payload is serialized to JSON.
  */

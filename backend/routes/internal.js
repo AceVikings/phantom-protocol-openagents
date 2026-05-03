@@ -5,6 +5,7 @@ import { DealStatus, transition, canTransition } from '../dealMachine.js';
 import { notifyAgent } from '../services/notify.js';
 import { sendAxlMessage } from '../services/axl.js';
 import { verifyRootHashExists } from '../services/zerog.js';
+import { burnDealSubnames } from '../services/ens.js';
 
 export const internalRouter = Router();
 
@@ -77,6 +78,11 @@ internalRouter.post('/janitor-fired', async (req, res) => {
   if (canTransition(deal.status, DealStatus.COMPLETE)) {
     transition(deal, DealStatus.COMPLETE);
   }
+
+  // Burn ENS subnames (fire-and-forget — non-blocking, deal is already done)
+  burnDealSubnames(deal.dealId).catch((err) =>
+    console.error(`[ENS] Failed to burn subnames for deal ${dealId}:`, err.message),
+  );
 
   // Notify both parties the deal is wiped
   Promise.allSettled([

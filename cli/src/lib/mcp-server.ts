@@ -210,7 +210,7 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        role: { type: 'string', enum: ['buyer', 'seller'], description: 'Agent role. Defaults to buyer.' },
+        role: { type: 'string', enum: ['buyer', 'seller'], description: 'Agent role — required: buyer or seller.' },
       },
     },
   },
@@ -682,7 +682,7 @@ async function handleGetNegotiation(args: { negotiation_id: string }, backendUrl
   )
 }
 
-
+async function handleInit(
   args: { role?: 'buyer' | 'seller' },
   backendUrl: string,
   webhookHost: string,
@@ -698,7 +698,10 @@ async function handleGetNegotiation(args: { negotiation_id: string }, backendUrl
       `Session active from ~/.phantom/session.json\nNo action taken.`,
     )
   }
-  return handleRegister({ role: args.role ?? 'buyer' }, backendUrl, webhookHost, webhookPort)
+  if (!args.role) {
+    return ok('ROLE_REQUIRED\nSpecify role: phantom_init role="buyer" or phantom_init role="seller"')
+  }
+  return handleRegister({ role: args.role }, backendUrl, webhookHost, webhookPort)
 }
 
 function handleAxlInfo() {

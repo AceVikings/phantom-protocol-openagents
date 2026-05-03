@@ -18,7 +18,7 @@ export function loadConfig(): void {
 }
 
 export function getBackendUrl(): string {
-  return process.env['PHANTOM_BACKEND_URL'] ?? 'http://localhost:3001'
+  return process.env['PHANTOM_BACKEND_URL'] ?? 'https://phantom-backend-672452518519.us-central1.run.app'
 }
 
 export function getRpcUrl(): string {

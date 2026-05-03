@@ -1,7 +1,7 @@
 import { createWalletClient, createPublicClient, http } from 'viem';
 import { sepolia } from 'viem/chains';
 import { addEnsContracts } from '@ensdomains/ensjs';
-import { createSubname, setTextRecord, transferName } from '@ensdomains/ensjs/wallet';
+import { createSubname, transferName } from '@ensdomains/ensjs/wallet';
 import { privateKeyToAccount } from 'viem/accounts';
 
 const DEAD_ADDRESS = '0x000000000000000000000000000000000000dEaD';
@@ -55,21 +55,6 @@ export async function mintDealSubnames(
     });
     console.log(`[ENS] Minted ${label}.${parentName} → ${owner}`);
   }
-}
-
-/**
- * Update a text record on deal-{dealId}.phantom.eth.
- * Common keys: phantom.status, phantom.rootHash, phantom.amount, axl.pubkey
- */
-export async function setDealTextRecord(dealId, key, value) {
-  const { walletClient } = getClients();
-  const parentName = process.env.ENS_PARENT_NAME || 'phantom.eth';
-
-  await setTextRecord(walletClient, {
-    name: `deal-${dealId}.${parentName}`,
-    key,
-    value,
-  });
 }
 
 /**
