@@ -376,6 +376,14 @@ const TOOLS: Tool[] = [
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
+/** Push the current webhookHost to the backend for an already-registered agent. */
+async function refreshWebhookUrl(backendUrl: string, webhookHost: string, apiKey: string): Promise<void> {
+  const webhookUrl = `${webhookHost}/webhook`
+  const { ok } = await api('PATCH', '/api/agents/me', { webhookUrl }, apiKey, backendUrl)
+  if (!ok) process.stderr.write(`[phantom] WARNING: Could not refresh webhook URL on backend\n`)
+  else     process.stderr.write(`[phantom] Webhook URL refreshed → ${webhookUrl}\n`)
+}
+
 async function handleRegister(
   args: { role: 'buyer' | 'seller'; displayName?: string },
   backendUrl: string,
@@ -873,7 +881,9 @@ async function handleInit(
       if (args.force) clearSession()
       const existing = getSession()
       if (existing) {
-        results.push(`${role.toUpperCase()}: already registered (agent ${existing.agentId})`)
+        // Refresh webhook so backend can deliver notifications with new tunnel URL
+        try { await refreshWebhookUrl(backendUrl, webhookHost, existing.apiKey) } catch { /* ignore */ }
+        results.push(`${role.toUpperCase()}: already registered (agent ${existing.agentId}) — webhook refreshed`)
       } else {
         try {
           await handleRegister({ role }, backendUrl, webhookHost, webhookPort)
@@ -907,6 +917,8 @@ async function handleInit(
   if (args.force) clearSession()
   const existing = getSession()
   if (existing) {
+    // Refresh webhook URL — localtunnel generates a new URL on each restart
+    try { await refreshWebhookUrl(backendUrl, webhookHost, existing.apiKey) } catch { /* ignore */ }
     const w          = loadOrCreateWallet()
     const axlPubkey  = walletToAxlPubkey(w.address)
     const label      = existing.displayName ? `${existing.displayName} (${identity})` : identity
@@ -917,6 +929,7 @@ async function handleInit(
       `AGENT_ID:  ${existing.agentId}\n` +
       `ROLE:      ${existing.role}\n` +
       `AXL_KEY:   ${axlPubkey}\n` +
+      `WEBHOOK:   refreshed ✓\n` +
       `\n━━ WALLET (Sepolia) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
       `  ADDRESS:  ${w.address}\n` +
       `  ENS:      ${existing.role}-<dealId>.${ENS_PARENT}  (per-deal ephemeral)\n` +
@@ -1139,6 +1152,12 @@ export async function startMcpServer(autoRole?: 'buyer' | 'seller'): Promise<voi
   const existing = loadSession()
   if (existing) {
     process.stderr.write(`[phantom] Session restored: agentId=${existing.agentId} role=${existing.role}\n`)
+    // Always refresh the webhook URL on startup — localtunnel gives a new URL each run
+    try {
+      await refreshWebhookUrl(BACKEND_URL, WEBHOOK_HOST, existing.apiKey)
+    } catch (e: unknown) {
+      process.stderr.write(`[phantom] WARNING: Webhook refresh failed: ${(e as Error).message}\n`)
+    }
   } else if (autoRole) {
     process.stderr.write(`[phantom] No session — auto-registering as ${autoRole}…\n`)
     try {

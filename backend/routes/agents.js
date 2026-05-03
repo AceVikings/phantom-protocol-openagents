@@ -49,3 +49,15 @@ agentsRouter.post('/register', (req, res) => {
 agentsRouter.get('/me', authenticate, (req, res) => {
   res.json(req.agent);
 });
+
+// PATCH /api/agents/me — update webhookUrl without changing agentId/apiKey
+agentsRouter.patch('/me', authenticate, (req, res) => {
+  const { webhookUrl } = req.body;
+  if (!webhookUrl || typeof webhookUrl !== 'string') {
+    return res.status(400).json({ error: 'webhookUrl is required' });
+  }
+  const agent = agents.get(req.agentId);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  agent.webhookUrl = webhookUrl;
+  return res.json({ ok: true, agentId: req.agentId, webhookUrl });
+});

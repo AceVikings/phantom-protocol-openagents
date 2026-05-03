@@ -14,7 +14,7 @@
 
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { negotiations, listings, offers } from '../store.js';
+import { negotiations, listings, offers, agents } from '../store.js';
 import { authenticate } from '../middleware/auth.js';
 import { notifyAgent } from '../services/notify.js';
 
@@ -145,13 +145,25 @@ negotiationsRouter.post('/:id/reject', authenticate, async (req, res) => {
 
 // GET /api/negotiations — list my negotiations (buyer sees theirs, seller sees theirs)
 negotiationsRouter.get('/', authenticate, (req, res) => {
-  const mine = [...negotiations.values()].filter(
-    n => n.buyerAgentId === req.agentId || n.sellerAgentId === req.agentId,
-  );
+  const myAddr = req.agent?.ephemeralAddress?.toLowerCase();
+  const mine = [...negotiations.values()].filter(n => {
+    if (n.buyerAgentId === req.agentId || n.sellerAgentId === req.agentId) return true;
+    // Also match by wallet address — handles re-registration and self-deal identity switching
+    if (myAddr) {
+      const buyerAgent  = agents.get(n.buyerAgentId);
+      const sellerAgent = agents.get(n.sellerAgentId);
+      if (buyerAgent?.ephemeralAddress  === myAddr) return true;
+      if (sellerAgent?.ephemeralAddress === myAddr) return true;
+    }
+    return false;
+  });
   return res.json(mine.map(neg => {
-    const isBuyer = neg.buyerAgentId === req.agentId;
+    const myAgentId = neg.buyerAgentId === req.agentId ? req.agentId
+      : neg.sellerAgentId === req.agentId ? req.agentId
+      : req.agentId;
+    const isBuyer = neg.buyerAgentId === req.agentId ||
+      agents.get(neg.buyerAgentId)?.ephemeralAddress?.toLowerCase() === myAddr;
     const { buyerAgentId, sellerAgentId, offerId, ...pub } = neg;
-    // Expose offerId only once accepted — both parties need it to proceed to deal creation
     const extra = neg.status === 'ACCEPTED' ? { offerId } : {};
     return { ...pub, ...extra, role: isBuyer ? 'buyer' : 'seller' };
   }));
@@ -162,8 +174,12 @@ negotiationsRouter.get('/:id', authenticate, (req, res) => {
   const neg = negotiations.get(req.params.id);
   if (!neg) return res.status(404).json({ error: 'Not found' });
 
-  const isBuyer  = neg.buyerAgentId  === req.agentId;
-  const isSeller = neg.sellerAgentId === req.agentId;
+  const myAddr = req.agent?.ephemeralAddress?.toLowerCase();
+  const buyerAgent  = agents.get(neg.buyerAgentId);
+  const sellerAgent = agents.get(neg.sellerAgentId);
+
+  const isBuyer  = neg.buyerAgentId  === req.agentId || buyerAgent?.ephemeralAddress?.toLowerCase()  === myAddr;
+  const isSeller = neg.sellerAgentId === req.agentId || sellerAgent?.ephemeralAddress?.toLowerCase() === myAddr;
   if (!isBuyer && !isSeller) return res.status(403).json({ error: 'Not a party' });
 
   // Strip the counterparty's identity; expose offerId only once accepted
