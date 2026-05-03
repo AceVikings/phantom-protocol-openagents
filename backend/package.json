@@ -13,9 +13,7 @@
     "mock:seller": "node mock-agents/seller.js",
     "mock:buyer": "node mock-agents/buyer.js",
     "agent:seller": "node mock-agents/seller-agent.js",
-    "agent:seller:openai": "node mock-agents/seller-agent.js --openai",
     "agent:buyer": "node mock-agents/buyer-agent.js",
-    "agent:buyer:openai": "node mock-agents/buyer-agent.js --openai",
     "axl": "node axl-cli/index.js"
   },
   "dependencies": {
@@ -27,7 +25,6 @@
     "ethers": "6.13.1",
     "express": "^4.21.2",
     "multer": "^2.1.1",
-    "openai": "^4.80.0",
     "uuid": "^11.0.5",
     "viem": "^2.21.54"
   }

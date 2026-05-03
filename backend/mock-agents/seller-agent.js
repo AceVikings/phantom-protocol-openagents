@@ -2,22 +2,17 @@
  * Phantom Protocol — Interactive Seller Agent (TUI)
  *
  * Features:
- *  - Chat with a local LLM (Ollama) or OpenAI
- *  - `research <topic>` — LLM generates a research report → auto-listed for sale
+ *  - `research <topic>` — generates a structured dataset → auto-listed for sale
  *  - Incoming deal offers auto-accepted; uploads the researched file
  *  - Incoming negotiation proposals handled by strategy (counter / accept)
  *
  * Usage:
  *   cd backend
- *   node mock-agents/seller-agent.js            # uses Ollama (llama3.2)
- *   node mock-agents/seller-agent.js --openai   # uses OpenAI (set OPENAI_API_KEY)
+ *   node mock-agents/seller-agent.js
  *
  * Environment:
  *   BACKEND_URL          — default http://localhost:3001
  *   SELLER_WEBHOOK_PORT  — default 3002
- *   OLLAMA_MODEL         — default llama3.2
- *   OLLAMA_HOST          — default http://localhost:11434
- *   OPENAI_API_KEY       — required for --openai flag
  */
 
 import 'dotenv/config';
@@ -25,13 +20,10 @@ import readline from 'node:readline';
 import express from 'express';
 import { randomBytes } from 'node:crypto';
 import { BASE, api, uploadFile, log, randomAxlPubkey, randomEphemeralAddress } from './utils.js';
-import { chat as llmChat, pingOllama, OLLAMA_MODEL, OPENAI_MODEL } from '../services/llm.js';
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const WEBHOOK_PORT = parseInt(process.env.SELLER_WEBHOOK_PORT || '3002', 10);
 const WEBHOOK_URL  = `http://localhost:${WEBHOOK_PORT}/webhook`;
-const PROVIDER     = process.argv.includes('--openai') ? 'openai' : 'ollama';
-const MODEL_NAME   = PROVIDER === 'openai' ? OPENAI_MODEL : OLLAMA_MODEL;
 
 // ── ANSI colours ────────────────────────────────────────────────────────────
 const NO_COLOR = !process.stdout.isTTY;
@@ -53,11 +45,6 @@ const dealFiles   = new Map();
 
 // negotiationId → { listingId, listedPrice, rounds }
 const activeNegs  = new Map();
-
-// LLM conversation history
-const history = [
-  { role: 'system', content: `You are a sharp research analyst working inside the Phantom Protocol data marketplace. You help users generate, price, and sell structured research reports. When given a research topic you produce concise, insightful analysis. Keep responses short and to the point.` },
-];
 
 // Negotiation strategy
 const STRATEGY = {
@@ -81,7 +68,6 @@ function interrupt(...lines) {
 function banner() {
   console.log(`\n${c.bold}${c.m}╔══════════════════════════════════════════════════╗`);
   console.log(`║  PHANTOM PROTOCOL — SELLER AGENT                ║`);
-  console.log(`║  LLM: ${MODEL_NAME.padEnd(42)}║`);
   console.log(`╚══════════════════════════════════════════════════╝${c.reset}\n`);
 }
 
@@ -90,93 +76,39 @@ function showHelp() {
   console.log(`  ${c.b}research <topic>${c.reset}    — generate & list a research report for sale`);
   console.log(`  ${c.b}list${c.reset}                — show your active listings`);
   console.log(`  ${c.b}status${c.reset}              — show active deals`);
-  console.log(`  ${c.b}chat <message>${c.reset}      — chat with the LLM`);
   console.log(`  ${c.b}help${c.reset}                — show this help`);
   console.log(`  ${c.b}exit${c.reset}                — quit\n`);
-  console.log(`${c.dim}Tip: anything not matching a command is treated as a chat message.${c.reset}\n`);
 }
 
-// ── LLM helpers ──────────────────────────────────────────────────────────────
-
-async function chatWithHistory(userMessage) {
-  history.push({ role: 'user', content: userMessage });
-  process.stdout.write(`${c.dim}  Thinking…${c.reset}\r`);
-  let reply;
-  try {
-    reply = await llmChat(history, { provider: PROVIDER });
-  } catch (err) {
-    readline.clearLine(process.stdout, 0);
-    console.log(`${c.r}  ✗ LLM error: ${err.message}${c.reset}`);
-    history.pop();
-    return;
-  }
-  readline.clearLine(process.stdout, 0);
-  history.push({ role: 'assistant', content: reply });
-
-  console.log(`\n${c.b}  Assistant:${c.reset}`);
-  console.log('  ' + reply.replace(/\n/g, '\n  ') + '\n');
-}
-
-async function generateResearchReport(topic) {
-  const researchMessages = [
-    {
-      role: 'system',
-      content: `You are a data research analyst. Return ONLY a valid JSON object with no markdown, no code fences, no extra text.
-Schema:
-{
-  "title": "string — concise report title",
-  "category": "string — one of: crypto, defi, nft, macro, tech, ai, commodities, other",
-  "tags": ["string"],
-  "summary": "string — 2-3 sentence executive summary",
-  "keyFindings": ["string — 5 to 7 bullet points"],
-  "dataPoints": [{"label":"string","value":"string|number","note":"string"}],
-  "methodology": "string",
-  "confidence": "high|medium|low",
-  "generatedAt": "${new Date().toISOString()}"
-}
-dataPoints should have 8-12 rows of concrete, plausible data relevant to the topic.`,
-    },
-    { role: 'user', content: `Generate a research report on: ${topic}` },
-  ];
-
-  process.stdout.write(`\n${c.b}  Generating research report on "${topic}"…${c.reset}\r`);
-
-  let raw;
-  try {
-    raw = await llmChat(researchMessages, { provider: PROVIDER });
-  } catch (err) {
-    readline.clearLine(process.stdout, 0);
-    throw new Error(`LLM error: ${err.message}`);
-  }
-  readline.clearLine(process.stdout, 0);
-
-  // Extract JSON — handle model wrapping output in ```json ... ```
-  let jsonStr = raw.trim();
-  const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) jsonStr = fenceMatch[1].trim();
-  const braceStart = jsonStr.indexOf('{');
-  const braceEnd   = jsonStr.lastIndexOf('}');
-  if (braceStart !== -1 && braceEnd !== -1) jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
-
-  let report;
-  try {
-    report = JSON.parse(jsonStr);
-  } catch {
-    // Fallback: wrap raw text in a valid structure
-    report = {
-      title: topic,
-      category: 'other',
-      tags: [topic.split(' ')[0].toLowerCase()],
-      summary: raw.slice(0, 300),
-      keyFindings: [raw.slice(0, 200)],
-      dataPoints: [],
-      methodology: 'LLM-generated',
-      confidence: 'medium',
-      generatedAt: new Date().toISOString(),
-    };
-  }
-
-  return report;
+// ── Report generator (static — agents use their own LLM via MCP) ─────────────
+function generateResearchReport(topic) {
+  const words    = topic.toLowerCase().split(/\s+/);
+  const category = words.some(w => ['crypto','bitcoin','eth','defi','nft','token'].includes(w))
+    ? (words.some(w => ['defi','uniswap','aave','compound'].includes(w)) ? 'defi' : 'crypto')
+    : words.some(w => ['ai','model','llm','neural','ml'].includes(w)) ? 'ai'
+    : words.some(w => ['macro','inflation','gdp','fed'].includes(w)) ? 'macro'
+    : 'other';
+  return {
+    title: `Research Report: ${topic.slice(0, 80)}`,
+    category,
+    tags: words.slice(0, 4),
+    summary: `A structured dataset covering key metrics and trends for: ${topic}. Compiled by the Phantom Protocol seller agent for distribution on the decentralised data marketplace.`,
+    keyFindings: [
+      `Market overview for ${topic}`,
+      'Historical trend analysis included',
+      'Comparative benchmarks across 12 months',
+      'Risk-adjusted performance metrics',
+      'Forward-looking indicators',
+    ],
+    dataPoints: Array.from({ length: 10 }, (_, i) => ({
+      label: `Metric ${i + 1}`,
+      value: +(Math.random() * 1000).toFixed(2),
+      note: `Data point ${i + 1} for ${topic}`,
+    })),
+    methodology: 'Phantom Protocol seller agent — static dataset for demo/testing',
+    confidence: 'medium',
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 // ── Research command ─────────────────────────────────────────────────────────
@@ -439,14 +371,8 @@ async function runCommand(line) {
       process.exit(0);
       break;
 
-    case 'chat':
-      if (!arg) { console.log(`${c.y}  Usage: chat <message>${c.reset}\n`); break; }
-      await chatWithHistory(arg);
-      break;
-
     default:
-      // Treat unknown input as a chat message
-      await chatWithHistory(trimmed);
+      console.log(`${c.y}  Unknown command. Type 'help' for available commands.${c.reset}\n`);
   }
 }
 
@@ -454,17 +380,6 @@ async function runCommand(line) {
 
 async function main() {
   banner();
-
-  // Check LLM connectivity
-  if (PROVIDER === 'ollama') {
-    process.stdout.write(`  Checking Ollama (${OLLAMA_MODEL})… `);
-    const ping = await pingOllama();
-    if (ping.ok) {
-      console.log(`${c.g}✓ connected${c.reset}`);
-    } else {
-      console.log(`${c.y}⚠ not reachable (${ping.error}) — chat will fail but deal flow works${c.reset}`);
-    }
-  }
 
   // Register agent
   process.stdout.write(`  Registering with coordinator… `);

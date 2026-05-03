@@ -2,23 +2,19 @@
  * Phantom Protocol — Interactive Buyer Agent (TUI)
  *
  * Features:
- *  - Chat with a local LLM (Ollama) or OpenAI
  *  - `discover [category]`   — browse seller listings
- *  - `negotiate <listingId> [price]` — AI-assisted price negotiation
+ *  - `negotiate <listingId> [price]` — strategy-based price negotiation
  *  - Handles counter-proposals automatically via strategy
  *  - When negotiation is accepted, auto-creates the deal
  *  - Locks escrow, monitors delivery, and logs verification
  *
  * Usage:
  *   cd backend
- *   node mock-agents/buyer-agent.js            # uses Ollama (llama3.2)
- *   node mock-agents/buyer-agent.js --openai   # uses OpenAI
+ *   node mock-agents/buyer-agent.js
  *
  * Environment:
  *   BACKEND_URL         — default http://localhost:3001
  *   BUYER_WEBHOOK_PORT  — default 3003
- *   OLLAMA_MODEL        — default llama3.2
- *   OPENAI_API_KEY      — required for --openai flag
  */
 
 import 'dotenv/config';
@@ -26,13 +22,10 @@ import readline from 'node:readline';
 import express from 'express';
 import { randomBytes } from 'node:crypto';
 import { BASE, api, log, randomAxlPubkey, randomEphemeralAddress, randomTxHash } from './utils.js';
-import { chat as llmChat, pingOllama, OLLAMA_MODEL, OPENAI_MODEL } from '../services/llm.js';
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const WEBHOOK_PORT = parseInt(process.env.BUYER_WEBHOOK_PORT || '3003', 10);
 const WEBHOOK_URL  = `http://localhost:${WEBHOOK_PORT}/webhook`;
-const PROVIDER     = process.argv.includes('--openai') ? 'openai' : 'ollama';
-const MODEL_NAME   = PROVIDER === 'openai' ? OPENAI_MODEL : OLLAMA_MODEL;
 
 // ── ANSI colours ────────────────────────────────────────────────────────────
 const NO_COLOR = !process.stdout.isTTY;
@@ -48,11 +41,6 @@ let activeDealId = null;
 
 // negotiationId → { listingId, listedPrice, currentPrice, rounds, offerId }
 const activeNegs = new Map();
-
-// LLM conversation history
-const history = [
-  { role: 'system', content: `You are a savvy procurement agent working inside the Phantom Protocol data marketplace. You help users discover, evaluate, and purchase research data. You can assess whether data is worth buying, suggest fair prices, and explain what they're getting. Keep responses concise.` },
-];
 
 // Negotiation strategy
 const STRATEGY = {
@@ -76,7 +64,6 @@ function interrupt(...lines) {
 function banner() {
   console.log(`\n${c.bold}${c.m}╔══════════════════════════════════════════════════╗`);
   console.log(`║  PHANTOM PROTOCOL — BUYER AGENT                 ║`);
-  console.log(`║  LLM: ${MODEL_NAME.padEnd(42)}║`);
   console.log(`╚══════════════════════════════════════════════════╝${c.reset}\n`);
 }
 
@@ -86,42 +73,14 @@ function showHelp() {
   console.log(`  ${c.b}negotiate <listingId> [price]${c.reset} — open price negotiation`);
   console.log(`  ${c.b}buy <listingId>${c.reset}               — buy at listed price directly`);
   console.log(`  ${c.b}deals${c.reset}                         — show active deals`);
-  console.log(`  ${c.b}chat <message>${c.reset}                — chat with the LLM`);
   console.log(`  ${c.b}help${c.reset}                          — show this help`);
   console.log(`  ${c.b}exit${c.reset}                          — quit\n`);
-  console.log(`${c.dim}Tip: anything not matching a command is treated as a chat message.${c.reset}\n`);
 }
 
-// ── LLM helpers ──────────────────────────────────────────────────────────────
-
-async function chatWithHistory(userMessage) {
-  history.push({ role: 'user', content: userMessage });
-  process.stdout.write(`${c.dim}  Thinking…${c.reset}\r`);
-  let reply;
-  try {
-    reply = await llmChat(history, { provider: PROVIDER });
-  } catch (err) {
-    readline.clearLine(process.stdout, 0);
-    console.log(`${c.r}  ✗ LLM error: ${err.message}${c.reset}`);
-    history.pop();
-    return;
-  }
-  readline.clearLine(process.stdout, 0);
-  history.push({ role: 'assistant', content: reply });
-  console.log(`\n${c.b}  Assistant:${c.reset}`);
-  console.log('  ' + reply.replace(/\n/g, '\n  ') + '\n');
-}
-
-/** Ask the LLM for a recommended opening bid given a listing. */
-async function getAiBid(listing) {
-  try {
-    const prompt = `A research report is listed for ${listing.priceUSDC} USDC. Title: "${listing.title}". Category: ${listing.category}. Description: "${listing.description?.slice(0, 200)}". Suggest a fair opening bid in USDC as a single integer. Reply with ONLY the number.`;
-    const raw = await llmChat([{ role: 'user', content: prompt }], { provider: PROVIDER });
-    const num = parseInt(raw.replace(/[^0-9]/g, ''), 10);
-    return isNaN(num) ? null : num;
-  } catch {
-    return null;
-  }
+// ── Bid strategy ─────────────────────────────────────────────────────────────
+/** Calculate opening bid using strategy multiplier (no LLM needed). */
+function getOpeningBid(listing) {
+  return Math.round(listing.priceUSDC * STRATEGY.openingBidMultiplier);
 }
 
 // ── Deal helpers ─────────────────────────────────────────────────────────────
@@ -188,16 +147,9 @@ async function cmdNegotiate(listingId, priceArg) {
     return cmdNegotiate(match.listingId, priceArg);
   }
 
-  let proposedPrice;
-  if (priceArg) {
-    proposedPrice = parseFloat(priceArg);
-  } else {
-    // Ask LLM for a recommended bid
-    process.stdout.write(`  ${c.dim}Asking LLM for fair bid…${c.reset}\r`);
-    const aiSuggestion = await getAiBid(listing);
-    readline.clearLine(process.stdout, 0);
-    proposedPrice = aiSuggestion ?? Math.round(listing.priceUSDC * STRATEGY.openingBidMultiplier);
-  }
+  const proposedPrice = priceArg
+    ? parseFloat(priceArg)
+    : getOpeningBid(listing);
 
   console.log(`\n${c.bold}${c.b}  ════════ OPENING NEGOTIATION ════════${c.reset}`);
   console.log(`  ${c.b}Listing   :${c.reset} ${listing.title.slice(0, 60)}`);
@@ -447,14 +399,8 @@ async function runCommand(line) {
       process.exit(0);
       break;
 
-    case 'chat':
-      if (!args.length) { console.log(`${c.y}  Usage: chat <message>${c.reset}\n`); break; }
-      await chatWithHistory(args.join(' '));
-      break;
-
     default:
-      // Treat as natural language chat
-      await chatWithHistory(trimmed);
+      console.log(`${c.y}  Unknown command. Type 'help' for available commands.${c.reset}\n`);
   }
 }
 
@@ -462,17 +408,6 @@ async function runCommand(line) {
 
 async function main() {
   banner();
-
-  // Check LLM connectivity
-  if (PROVIDER === 'ollama') {
-    process.stdout.write(`  Checking Ollama (${OLLAMA_MODEL})… `);
-    const ping = await pingOllama();
-    if (ping.ok) {
-      console.log(`${c.g}✓ connected${c.reset} [${ping.models.slice(0, 3).join(', ')}]`);
-    } else {
-      console.log(`${c.y}⚠ not reachable (${ping.error}) — chat will fail but deal flow works${c.reset}`);
-    }
-  }
 
   // Register agent
   process.stdout.write(`  Registering with coordinator… `);
