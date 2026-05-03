@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { deals, offers } from '../store.js';
+import { deals, offers, agents } from '../store.js';
 import { authenticate } from '../middleware/auth.js';
 import { DealStatus, transition } from '../dealMachine.js';
 import { mintDealSubnames } from '../services/ens.js';
@@ -10,6 +10,22 @@ import { createArbiterWorkflow, createJanitorWorkflow } from '../services/keeper
 import { notifyAgent } from '../services/notify.js';
 
 export const dealsRouter = Router();
+
+// GET /api/deals — list all deals where caller is buyer or seller
+dealsRouter.get('/', authenticate, (req, res) => {
+  const myAddr = req.agent?.ephemeralAddress?.toLowerCase();
+  const mine = [...deals.values()].filter(deal => {
+    if (deal.buyerAgentId === req.agentId || deal.sellerAgentId === req.agentId) return true;
+    // ephemeralAddress fallback — handles re-registration
+    if (myAddr) {
+      if (deal.buyerEphemeralAddress?.toLowerCase()  === myAddr) return true;
+      if (deal.sellerEphemeralAddress?.toLowerCase() === myAddr) return true;
+    }
+    return false;
+  });
+  const safe = mine.map(({ buyerAgentId: _b, sellerAgentId: _s, ...d }) => d);
+  return res.json(safe);
+});
 
 // POST /api/deals — buyer initiates
 dealsRouter.post('/', authenticate, async (req, res) => {
@@ -103,7 +119,9 @@ dealsRouter.get('/:dealId', authenticate, (req, res) => {
   const deal = deals.get(req.params.dealId);
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
 
-  const isParty = deal.buyerAgentId === req.agentId || deal.sellerAgentId === req.agentId;
+  const myAddr = req.agent?.ephemeralAddress?.toLowerCase();
+  const isParty = deal.buyerAgentId === req.agentId || deal.sellerAgentId === req.agentId ||
+    (myAddr && (deal.buyerEphemeralAddress?.toLowerCase() === myAddr || deal.sellerEphemeralAddress?.toLowerCase() === myAddr));
   if (!isParty) return res.status(403).json({ error: 'Access denied' });
 
   // Strip internal agent IDs from public response
