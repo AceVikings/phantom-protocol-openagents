@@ -151,7 +151,7 @@ const useCases = [
   {
     Icon: Lock,
     title: 'Prompt Vaults',
-    desc: 'High-value system prompts traded privately. Neither party's identity nor content exposed on-chain.',
+    desc: "High-value system prompts traded privately. Neither party's identity nor content exposed on-chain.",
   },
   {
     Icon: Lightning,
