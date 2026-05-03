@@ -105,11 +105,9 @@ export const negotiations = new MongoMap('negotiations');
 
 // ── DB init (called once before server starts) ────────────────────────────────
 
-const DEFAULT_MONGO_URI =
-  'mongodb+srv://REDACTED:REDACTED@REDACTED.mongodb.net/phantom';
-
 export async function initDB() {
-  const uri = process.env.MONGO_URI || DEFAULT_MONGO_URI;
+  const uri = process.env.MONGO_URI;
+  if (!uri) throw new Error('MONGO_URI environment variable is required');
 
   await mongoose.connect(uri, { dbName: 'phantom' });
   console.log('[Mongoose] Connected to', mongoose.connection.db.databaseName);
